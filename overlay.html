@@ -199,6 +199,7 @@ let maxDuration = 120;
 let activeVideoKey = "";
 let limitTimer = null;
 let clockTimer = null;
+let playRetryTimer = null;
 let finishing = false;
 
 auth.signInAnonymously()
@@ -212,13 +213,19 @@ function onYouTubeIframeAPIReady() {
     playerVars: {
       autoplay: 1,
       controls: 0,
+      enablejsapi: 1,
+      fs: 0,
+      iv_load_policy: 3,
       rel: 0,
       modestbranding: 1,
-      playsinline: 1
+      playsinline: 1,
+      origin: window.location.origin
     },
     events: {
       onReady: () => {
         ytReady = true;
+        player.setVolume(100);
+        player.unMute();
         syncPlayback();
       },
       onStateChange: onPlayerState
@@ -228,7 +235,24 @@ function onYouTubeIframeAPIReady() {
 
 function onPlayerState(event) {
   if (event.data === YT.PlayerState.ENDED) {
+    stopPlayRetries();
     finishCurrent();
+    return;
+  }
+
+  if (event.data === YT.PlayerState.PLAYING) {
+    stopPlayRetries();
+    player.setVolume(100);
+    player.unMute();
+    return;
+  }
+
+  if (
+    event.data === YT.PlayerState.UNSTARTED ||
+    event.data === YT.PlayerState.CUED ||
+    event.data === YT.PlayerState.PAUSED
+  ) {
+    requestPlay();
   }
 }
 
@@ -299,13 +323,48 @@ function syncPlayback() {
   const videoKey = `${current.id || ""}:${current.videoId}`;
   if (videoKey !== activeVideoKey) {
     activeVideoKey = videoKey;
+    stopPlayRetries();
     player.loadVideoById({
       videoId: current.videoId,
       startSeconds: Math.max(0, elapsed)
     });
+    requestPlay();
   } else {
-    player.playVideo();
+    requestPlay();
   }
+}
+
+function requestPlay() {
+  if (!ytReady || !player || !current) return;
+
+  let attempts = 0;
+  stopPlayRetries();
+
+  const tryOnce = () => {
+    if (!current || !player) {
+      stopPlayRetries();
+      return;
+    }
+
+    try {
+      player.setVolume(100);
+      player.unMute();
+      player.playVideo();
+    } catch(error) {
+      console.error("YouTube play failed", error);
+    }
+
+    attempts++;
+    if (attempts >= 10) stopPlayRetries();
+  };
+
+  tryOnce();
+  playRetryTimer = setInterval(tryOnce, 750);
+}
+
+function stopPlayRetries() {
+  clearInterval(playRetryTimer);
+  playRetryTimer = null;
 }
 
 function showOverlay(item) {
@@ -320,6 +379,7 @@ function hideOverlay() {
   document.getElementById("overlay-root").classList.remove("visible");
   clearTimeout(limitTimer);
   clearInterval(clockTimer);
+  stopPlayRetries();
   document.getElementById("progress-bar").style.width = "0%";
 }
 
