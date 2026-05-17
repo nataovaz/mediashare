@@ -359,6 +359,8 @@ button:active { transform: scale(.97); }
         <div class="info-box">
           <strong style="color:var(--text);">Link para o chat</strong> — coloca no Cloudbot pra anunciar a cada 10 min:
           <code id="share-link">Cole o link do seu site aqui</code>
+          <strong style="color:var(--text);display:block;margin-top:12px;">Link do overlay</strong> - usa este no Browser Source do OBS/StreamElements:
+          <code id="overlay-link">Cole o link do overlay aqui</code>
         </div>
       </div>
 
@@ -395,12 +397,13 @@ const firebaseConfig = {
 
 // --- Firebase init ---
 let db = null;
+let auth = null;
 let qRef, curRef, setRef;
 
 function initFirebase() {
   try {
     firebase.initializeApp(firebaseConfig);
-  const auth = firebase.auth();
+    auth = firebase.auth();
     db = firebase.database();
     qRef   = db.ref('ms/queue');
     curRef = db.ref('ms/current');
@@ -468,6 +471,12 @@ function pending() { return localQueue.filter(v => v.id !== localCurrent?.id); }
 async function fbSet(ref, data) { try { await ref.set(data); } catch(e) { console.error(e); } }
 async function fbPush(ref, data) { try { await ref.push(data); } catch(e) { console.error(e); } }
 async function fbRemove(ref) { try { await ref.remove(); } catch(e) { console.error(e); } }
+async function removeQueuedById(id) {
+  if (!id) return;
+  await qRef.orderByChild('id').equalTo(id).once('value', snap => {
+    snap.forEach(child => child.ref.remove());
+  });
+}
 
 // --- Submit ---
 async function handleSubmit() {
@@ -499,22 +508,36 @@ function showFlash(el, msg, isOk) {
 async function playSingle(id) {
   const item = localQueue.find(v => v.id === id);
   if (!item) return;
-  await fbSet(curRef, item);
+  await fbSet(curRef, {
+    ...item,
+    startedAt: Date.now(),
+    duration: localMaxDuration
+  });
   startTimer();
 }
 
 async function startNext() {
   const p = pending();
   if (!p.length) return;
-  await fbSet(curRef, p[0]);
+  await fbSet(curRef, {
+    ...p[0],
+    startedAt: Date.now(),
+    duration: localMaxDuration
+  });
   startTimer();
 }
 
 async function skipCurrent() {
   clearInterval(tInt);
+  const currentId = localCurrent?.id;
   const p = pending();
+  await removeQueuedById(currentId);
   if (p.length > 0) {
-    await fbSet(curRef, p[0]);
+    await fbSet(curRef, {
+      ...p[0],
+      startedAt: Date.now(),
+      duration: localMaxDuration
+    });
     startTimer();
   } else {
     await fbRemove(curRef);
@@ -524,18 +547,21 @@ async function skipCurrent() {
 async function removeCurrent() {
   if (!localCurrent) return;
   clearInterval(tInt);
-  await qRef.orderByChild('id').equalTo(localCurrent.id).once('value', snap => {
-    snap.forEach(child => child.ref.remove());
-  });
+  await removeQueuedById(localCurrent.id);
   const p = pending().filter(v => v.id !== localCurrent?.id);
-  if (p.length > 0) { await fbSet(curRef, p[0]); startTimer(); }
+  if (p.length > 0) {
+    await fbSet(curRef, {
+      ...p[0],
+      startedAt: Date.now(),
+      duration: localMaxDuration
+    });
+    startTimer();
+  }
   else await fbRemove(curRef);
 }
 
 async function removeItem(id) {
-  await qRef.orderByChild('id').equalTo(id).once('value', snap => {
-    snap.forEach(child => child.ref.remove());
-  });
+  await removeQueuedById(id);
 }
 
 async function clearAll() {
@@ -554,7 +580,10 @@ function updateDuration(v) {
 function startTimer() {
   clearInterval(tInt);
   if (!localCurrent) return;
-  tLeft = localMaxDuration;
+  const duration = Number(localCurrent.duration || localMaxDuration);
+  const startedAt = Number(localCurrent.startedAt || Date.now());
+  const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  tLeft = Math.max(0, duration - elapsed);
   updateTimerUI();
   tInt = setInterval(async () => {
     tLeft--;
@@ -566,7 +595,8 @@ function startTimer() {
 function updateTimerUI() {
   const te  = document.getElementById('ctrl-timer');
   const pb  = document.getElementById('pbar');
-  const pct = Math.round(((localMaxDuration - tLeft) / localMaxDuration) * 100);
+  const duration = Number(localCurrent?.duration || localMaxDuration);
+  const pct = Math.round(((duration - tLeft) / duration) * 100);
   if (te) {
     te.textContent = fmt(tLeft) + ' restantes';
     te.className = 'ctrl-timer' + (tLeft < 20 ? ' urgent' : '');
@@ -679,19 +709,32 @@ function closePw() {
 }
 
 function tryLogin() {
-  const email = document.getElementById('pw-email').value;
+  if (!auth) {
+    showFlash(document.getElementById('pw-err'), 'Firebase Auth nao inicializou. Confira a configuracao.');
+    return;
+  }
+  const email = document.getElementById('pw-email').value.trim();
   const pass  = document.getElementById('pw-input').value;
   auth.signInWithEmailAndPassword(email, pass)
     .then(() => { closePw(); setMode('streamer'); })
-    .catch(() => { showFlash(document.getElementById('pw-err'), 'Email ou senha incorretos!'); });
+    .catch((error) => {
+      const msg = error?.code === 'auth/unauthorized-domain'
+        ? 'Dominio nao autorizado no Firebase Auth. Adicione seu github.io em Authentication > Settings.'
+        : 'Email ou senha incorretos!';
+      showFlash(document.getElementById('pw-err'), msg);
+    });
 }
 
 document.getElementById('pw-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') tryLogin();
 });
+document.getElementById('pw-email').addEventListener('keydown', e => {
+  if (e.key === 'Enter') tryLogin();
+});
 
 // --- Share link ---
 document.getElementById('share-link').textContent = window.location.href.split('?')[0];
+document.getElementById('overlay-link').textContent = new URL('overlay.html', window.location.href).href;
 
 // --- Init ---
 document.getElementById('dur-slider').value = localMaxDuration;

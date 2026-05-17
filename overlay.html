@@ -3,139 +3,175 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>natanjogos — Media Share Overlay</title>
+<title>natanjogos - Media Share Overlay</title>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html,
+  body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    font-family: "Segoe UI", Arial, sans-serif;
+  }
 
   body {
-    background: transparent;
-    font-family: 'Segoe UI', sans-serif;
-    width: 100vw;
-    height: 100vh;
-    overflow: hidden;
     display: flex;
-    flex-direction: column;
-    justify-content: flex-end;
-    align-items: flex-start;
+    align-items: flex-end;
+    justify-content: flex-start;
     padding: 20px;
   }
 
-  /* ── Player invisível ── */
-  #yt-player {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-    pointer-events: none;
-    top: 0; left: 0;
-  }
-
-  /* ── Banner inferior ── */
-  #banner {
+  #overlay-root {
+    width: min(720px, calc(100vw - 40px));
     display: none;
-    align-items: center;
-    gap: 14px;
-    background: rgba(10, 10, 20, 0.82);
-    backdrop-filter: blur(8px);
-    border: 1px solid rgba(124, 58, 237, 0.5);
-    border-radius: 14px;
-    padding: 10px 18px;
-    min-width: 320px;
-    max-width: 520px;
-    animation: slideIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+    pointer-events: none;
+    filter: drop-shadow(0 18px 36px rgba(0, 0, 0, 0.45));
   }
 
-  #banner.visible { display: flex; }
-
-  @keyframes slideIn {
-    from { opacity: 0; transform: translateY(20px); }
-    to   { opacity: 1; transform: translateY(0); }
+  #overlay-root.visible {
+    display: block;
+    animation: overlay-in 0.35s ease-out;
   }
 
-  .icon {
-    width: 38px;
-    height: 38px;
-    background: linear-gradient(135deg, #7c3aed, #a855f7);
-    border-radius: 10px;
+  @keyframes overlay-in {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  #video-shell {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    background: #000;
+    border: 2px solid rgba(124, 58, 237, 0.75);
+    border-radius: 12px 12px 0 0;
+  }
+
+  #yt-player,
+  #yt-player iframe {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  #banner {
+    position: relative;
     display: flex;
     align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    font-size: 18px;
+    gap: 14px;
+    min-height: 72px;
+    padding: 12px 18px 15px;
+    color: #f0eeff;
+    background: rgba(10, 10, 20, 0.9);
+    border: 2px solid rgba(124, 58, 237, 0.75);
+    border-top: 0;
+    border-radius: 0 0 12px 12px;
+    overflow: hidden;
   }
 
-  .info { overflow: hidden; }
+  .play-mark {
+    width: 42px;
+    height: 42px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #7c3aed, #a855f7);
+  }
+
+  .play-mark::before {
+    content: "";
+    width: 0;
+    height: 0;
+    margin-left: 3px;
+    border-top: 9px solid transparent;
+    border-bottom: 9px solid transparent;
+    border-left: 14px solid #fff;
+  }
+
+  .info {
+    min-width: 0;
+    flex: 1;
+  }
 
   .label {
     font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 1.5px;
-    text-transform: uppercase;
+    font-weight: 800;
+    letter-spacing: 1.4px;
     color: #a78bfa;
+    text-transform: uppercase;
     margin-bottom: 2px;
   }
 
   .title {
-    font-size: 14px;
-    font-weight: 600;
-    color: #f0eeff;
-    white-space: nowrap;
+    max-width: 100%;
     overflow: hidden;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 700;
+    white-space: nowrap;
     text-overflow: ellipsis;
-    max-width: 380px;
   }
 
   .user {
-    font-size: 11px;
-    color: rgba(240, 238, 255, 0.5);
-    margin-top: 2px;
-    white-space: nowrap;
+    max-width: 100%;
     overflow: hidden;
+    color: rgba(240, 238, 255, 0.62);
+    font-size: 12px;
+    white-space: nowrap;
     text-overflow: ellipsis;
+    margin-top: 2px;
   }
 
-  /* ── Barra de progresso ── */
+  .timer {
+    flex: 0 0 auto;
+    color: #c4b5fd;
+    font-size: 18px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+  }
+
   .progress-wrap {
     position: absolute;
-    bottom: 0; left: 0; right: 0;
-    height: 3px;
-    background: rgba(124,58,237,0.2);
-    border-radius: 0 0 14px 14px;
-    overflow: hidden;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 4px;
+    background: rgba(124, 58, 237, 0.22);
   }
+
   .progress-bar {
     height: 100%;
-    background: linear-gradient(90deg, #7c3aed, #a855f7);
     width: 0%;
-    transition: width 1s linear;
+    background: linear-gradient(90deg, #7c3aed, #a855f7);
   }
 </style>
 </head>
 <body>
-
-<!-- Player oculto do YouTube -->
-<div id="yt-player"></div>
-
-<!-- Banner overlay -->
-<div id="banner">
-  <div class="icon">▶</div>
-  <div class="info">
-    <div class="label">♪ tocando agora</div>
-    <div class="title" id="now-title">—</div>
-    <div class="user" id="now-user">—</div>
+  <div id="overlay-root">
+    <div id="video-shell">
+      <div id="yt-player"></div>
+    </div>
+    <div id="banner">
+      <div class="play-mark" aria-hidden="true"></div>
+      <div class="info">
+        <div class="label">Tocando agora</div>
+        <div class="title" id="now-title">Aguardando video</div>
+        <div class="user" id="now-user">pedido por alguem</div>
+      </div>
+      <div class="timer" id="timer">0:00</div>
+      <div class="progress-wrap">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+    </div>
   </div>
-  <div class="progress-wrap">
-    <div class="progress-bar" id="progress-bar"></div>
-  </div>
-</div>
 
 <script src="https://www.youtube.com/iframe_api"></script>
 <script>
-// ============================================================
-// CONFIGURAÇÕES — mesma config do index.html
-// ============================================================
 const firebaseConfig = {
   apiKey:            "AIzaSyCJTxuj9BIDaKjuOpncPR324XukHo1pBAM",
   authDomain:        "mediashare-d352f.firebaseapp.com",
@@ -146,115 +182,196 @@ const firebaseConfig = {
   appId:             "1:25476047009:web:ae529f5d66486a398850e0"
 };
 
-// ============================================================
-// INIT FIREBASE
-// ============================================================
 firebase.initializeApp(firebaseConfig);
-const db = firebase.database().ref('queue');
 
-// ============================================================
-// ESTADO
-// ============================================================
-let player       = null;
-let ytReady      = false;
-let queue        = [];
-let currentKey   = null;
-let progressTimer = null;
+const database = firebase.database();
+const queueRef = database.ref("ms/queue");
+const currentRef = database.ref("ms/current");
+const settingsRef = database.ref("ms/settings");
 
-// ============================================================
-// YOUTUBE IFRAME API
-// ============================================================
+let player = null;
+let ytReady = false;
+let queue = [];
+let current = null;
+let maxDuration = 120;
+let activeVideoKey = "";
+let limitTimer = null;
+let clockTimer = null;
+let finishing = false;
+
 function onYouTubeIframeAPIReady() {
-  player = new YT.Player('yt-player', {
-    height: '1', width: '1',
-    playerVars: { autoplay: 1, controls: 0, playsinline: 1 },
+  player = new YT.Player("yt-player", {
+    width: "100%",
+    height: "100%",
+    playerVars: {
+      autoplay: 1,
+      controls: 0,
+      rel: 0,
+      modestbranding: 1,
+      playsinline: 1
+    },
     events: {
-      onReady:       () => { ytReady = true; tryPlay(); },
+      onReady: () => {
+        ytReady = true;
+        syncPlayback();
+      },
       onStateChange: onPlayerState
     }
   });
 }
 
-function onPlayerState(e) {
-  if (e.data === YT.PlayerState.ENDED) {
-    removeCurrentAndPlayNext();
-  }
-  if (e.data === YT.PlayerState.PLAYING) {
-    startProgress();
-  }
-  if (e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED) {
-    stopProgress();
+function onPlayerState(event) {
+  if (event.data === YT.PlayerState.ENDED) {
+    finishCurrent();
   }
 }
 
-// ============================================================
-// PROGRESSO
-// ============================================================
-function startProgress() {
-  stopProgress();
-  const bar = document.getElementById('progress-bar');
-  bar.style.transition = 'none';
-  bar.style.width = '0%';
-  setTimeout(() => {
-    const duration = player.getDuration();
-    if (duration > 0) {
-      bar.style.transition = `width ${duration}s linear`;
-      bar.style.width = '100%';
-    }
-  }, 100);
-}
-
-function stopProgress() {
-  const bar = document.getElementById('progress-bar');
-  bar.style.transition = 'none';
-  bar.style.width = '0%';
-}
-
-// ============================================================
-// FILA FIREBASE
-// ============================================================
-db.on('value', snap => {
-  const data = snap.val() || {};
-  queue = Object.entries(data).map(([key, val]) => ({ key, ...val }));
-  // Ordena por timestamp se existir
-  queue.sort((a, b) => (a.ts || 0) - (b.ts || 0));
-  tryPlay();
+queueRef.on("value", snap => {
+  const raw = snap.val() || {};
+  queue = Object.entries(raw)
+    .map(([key, value]) => ({ key, ...value }))
+    .sort((a, b) => Number(a.submittedAt || a.ts || 0) - Number(b.submittedAt || b.ts || 0));
+  maybeStartQueue();
 });
 
-function tryPlay() {
-  if (!ytReady || queue.length === 0) {
-    hideBanner();
+currentRef.on("value", snap => {
+  current = snap.val() || null;
+  syncPlayback();
+  maybeStartQueue();
+});
+
+settingsRef.on("value", snap => {
+  const settings = snap.val() || {};
+  maxDuration = Number(settings.maxDuration || 120);
+  syncClock();
+});
+
+function withPlaybackData(item) {
+  return {
+    ...item,
+    startedAt: Date.now(),
+    duration: Number(maxDuration || 120)
+  };
+}
+
+function maybeStartQueue() {
+  if (current || !queue.length || finishing) return;
+
+  currentRef.transaction(existing => {
+    if (existing || !queue.length) return existing;
+    return withPlaybackData(queue[0]);
+  });
+}
+
+function syncPlayback() {
+  clearTimeout(limitTimer);
+
+  if (!current || !current.videoId) {
+    hideOverlay();
+    activeVideoKey = "";
     return;
   }
-  const first = queue[0];
-  if (first.key === currentKey) return; // já está tocando
-  currentKey = first.key;
-  showBanner(first);
-  player.loadVideoById(first.id);
-  player.playVideo();
+
+  showOverlay(current);
+  syncClock();
+
+  const duration = getDuration();
+  const elapsed = getElapsed();
+  const remaining = Math.max(0, duration - elapsed);
+
+  if (remaining <= 0) {
+    finishCurrent();
+    return;
+  }
+
+  limitTimer = setTimeout(finishCurrent, (remaining + 0.5) * 1000);
+
+  if (!ytReady || !player) return;
+
+  const videoKey = `${current.id || ""}:${current.videoId}`;
+  if (videoKey !== activeVideoKey) {
+    activeVideoKey = videoKey;
+    player.loadVideoById({
+      videoId: current.videoId,
+      startSeconds: Math.max(0, elapsed)
+    });
+  } else {
+    player.playVideo();
+  }
 }
 
-function removeCurrentAndPlayNext() {
-  if (!currentKey) return;
-  firebase.database().ref('queue/' + currentKey).remove();
-  currentKey = null;
+function showOverlay(item) {
+  document.getElementById("overlay-root").classList.add("visible");
+  document.getElementById("now-title").textContent =
+    item.title || `youtu.be/${item.videoId}`;
+  document.getElementById("now-user").textContent =
+    `pedido por ${item.submitter || item.user || "alguem"}`;
 }
 
-// ============================================================
-// BANNER
-// ============================================================
-function showBanner(item) {
-  document.getElementById('now-title').textContent = item.title || 'Vídeo sem título';
-  document.getElementById('now-user').textContent  = '🎮 pedido por ' + (item.user || 'alguém');
-  const banner = document.getElementById('banner');
-  banner.classList.remove('visible');
-  void banner.offsetWidth; // reflow para reiniciar animação
-  banner.classList.add('visible');
+function hideOverlay() {
+  document.getElementById("overlay-root").classList.remove("visible");
+  clearTimeout(limitTimer);
+  clearInterval(clockTimer);
+  document.getElementById("progress-bar").style.width = "0%";
 }
 
-function hideBanner() {
-  document.getElementById('banner').classList.remove('visible');
-  stopProgress();
+function syncClock() {
+  clearInterval(clockTimer);
+  updateClock();
+  if (current) {
+    clockTimer = setInterval(updateClock, 1000);
+  }
+}
+
+function updateClock() {
+  const duration = getDuration();
+  const elapsed = Math.min(duration, getElapsed());
+  const remaining = Math.max(0, duration - elapsed);
+  const progress = duration > 0 ? (elapsed / duration) * 100 : 0;
+
+  document.getElementById("timer").textContent = formatTime(remaining);
+  document.getElementById("progress-bar").style.width = `${Math.min(100, progress)}%`;
+}
+
+function getDuration() {
+  return Number(current?.duration || maxDuration || 120);
+}
+
+function getElapsed() {
+  if (!current?.startedAt) return 0;
+  return Math.max(0, Math.floor((Date.now() - Number(current.startedAt)) / 1000));
+}
+
+function formatTime(seconds) {
+  const value = Math.max(0, Math.round(Number(seconds || 0)));
+  return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, "0")}`;
+}
+
+async function finishCurrent() {
+  if (finishing || !current) return;
+  finishing = true;
+
+  const done = current;
+  const next = queue.find(item => item.id !== done.id);
+
+  try {
+    await removeQueuedById(done.id);
+    if (next) {
+      await currentRef.set(withPlaybackData(next));
+    } else {
+      await currentRef.remove();
+    }
+  } finally {
+    finishing = false;
+  }
+}
+
+async function removeQueuedById(id) {
+  if (!id) return;
+  const snap = await queueRef.orderByChild("id").equalTo(id).once("value");
+  const removals = [];
+  snap.forEach(child => removals.push(child.ref.remove()));
+  await Promise.all(removals);
 }
 </script>
 </body>
