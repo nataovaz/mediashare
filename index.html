@@ -83,6 +83,7 @@ button {
 }
 button:hover { opacity: .85; }
 button:active { transform: scale(.97); }
+button:disabled { cursor: not-allowed; opacity: .55; transform: none; }
 .btn-primary { background: var(--purple); border-color: var(--purple); color: #fff; }
 .btn-primary:hover { opacity: .9; }
 .btn-danger { background: var(--red-light); border-color: rgba(239,68,68,.3); color: var(--red); }
@@ -300,7 +301,7 @@ button:active { transform: scale(.97); }
       <div class="flash flash-ok" id="v-ok">✅ Vídeo adicionado à fila!</div>
       <div class="flash flash-err" id="v-err"></div>
 
-      <button class="btn-primary btn-full" onclick="handleSubmit()">Adicionar à Fila</button>
+      <button class="btn-primary btn-full" id="submit-btn" onclick="handleSubmit()">Adicionar à Fila</button>
     </div>
 
     <div class="card" style="margin-top:14px;">
@@ -398,6 +399,7 @@ const firebaseConfig = {
 // --- Firebase init ---
 let db = null;
 let auth = null;
+let authReady = Promise.resolve();
 let qRef, curRef, setRef;
 
 function initFirebase() {
@@ -410,7 +412,7 @@ function initFirebase() {
     setRef = db.ref('ms/settings');
     document.getElementById('setup-banner').style.display =
       firebaseConfig.apiKey === '' ? 'block' : 'none';
-    auth.signInAnonymously()
+    authReady = auth.signInAnonymously()
       .catch(e => {
         console.error(e);
         document.getElementById('setup-banner').style.display = 'block';
@@ -454,6 +456,8 @@ let localMaxDuration = 120;
 let mode = 'viewer';
 let tLeft = 0;
 let tInt = null;
+let submitCooldownInt = null;
+const SUBMIT_COOLDOWN_MS = 8000;
 
 // --- Helpers ---
 function ytId(url) {
@@ -478,6 +482,45 @@ function pending() { return localQueue.filter(v => v.id !== localCurrent?.id); }
 async function fbSet(ref, data) { await ref.set(data); }
 async function fbPush(ref, data) { await ref.push(data); }
 async function fbRemove(ref) { await ref.remove(); }
+async function waitForAuthUser() {
+  await authReady.catch(() => null);
+  if (auth?.currentUser) return auth.currentUser;
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      unsubscribe();
+      reject(new Error('auth-timeout'));
+    }, 5000);
+    const unsubscribe = auth.onAuthStateChanged(user => {
+      if (!user) return;
+      clearTimeout(timer);
+      unsubscribe();
+      resolve(user);
+    });
+  });
+}
+
+async function reserveSubmitSlot() {
+  const user = await waitForAuthUser();
+  const cooldownRef = db.ref(`ms/cooldowns/${user.uid}`);
+  const now = Date.now();
+  let waitMs = 0;
+
+  const result = await cooldownRef.transaction(lastValue => {
+    const lastSubmit = Number(lastValue || 0);
+    waitMs = SUBMIT_COOLDOWN_MS - (now - lastSubmit);
+    if (waitMs > 0) return;
+    return now;
+  });
+
+  if (!result.committed) {
+    const error = new Error('submit-cooldown');
+    error.code = 'SUBMIT_COOLDOWN';
+    error.waitMs = waitMs;
+    throw error;
+  }
+}
+
 async function removeQueuedById(id) {
   if (!id) return;
   await qRef.orderByChild('id').equalTo(id).once('value', snap => {
@@ -501,8 +544,10 @@ async function handleSubmit() {
 
   const item = { id: uid(), videoId: vid, url, submitter: name, submittedAt: Date.now() };
   try {
+    await reserveSubmitSlot();
     await fbPush(qRef, item);
     document.getElementById('v-url').value = '';
+    startSubmitCooldown(SUBMIT_COOLDOWN_MS);
     showFlash(ok, 'Video adicionado a fila!', true);
   } catch(e) {
     console.error(e);
@@ -516,7 +561,33 @@ function showFlash(el, msg, isOk) {
   if (isOk) setTimeout(() => el.style.display = 'none', 4000);
 }
 
+function startSubmitCooldown(ms) {
+  const btn = document.getElementById('submit-btn');
+  const endsAt = Date.now() + ms;
+  clearInterval(submitCooldownInt);
+
+  const tick = () => {
+    const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+    if (left <= 0) {
+      btn.disabled = false;
+      btn.textContent = 'Adicionar à Fila';
+      clearInterval(submitCooldownInt);
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = `Aguarde ${left}s`;
+  };
+
+  tick();
+  submitCooldownInt = setInterval(tick, 250);
+}
+
 function firebaseErrorMessage(e) {
+  if (e?.code === 'SUBMIT_COOLDOWN') {
+    const seconds = Math.max(1, Math.ceil(Number(e.waitMs || SUBMIT_COOLDOWN_MS) / 1000));
+    startSubmitCooldown(seconds * 1000);
+    return `Calma ai: espere ${seconds}s para mandar outro video.`;
+  }
   if (e?.code === 'PERMISSION_DENIED' || String(e?.message || '').includes('PERMISSION_DENIED')) {
     return 'Firebase bloqueou. Ative login anonimo e ajuste as regras do Realtime Database.';
   }
