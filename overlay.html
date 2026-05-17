@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natanjogos — Media Share Overlay</title>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: transparent;
+    font-family: 'Segoe UI', sans-serif;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: flex-start;
+    padding: 20px;
+  }
+
+  /* ── Player invisível ── */
+  #yt-player {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+    top: 0; left: 0;
+  }
+
+  /* ── Banner inferior ── */
+  #banner {
+    display: none;
+    align-items: center;
+    gap: 14px;
+    background: rgba(10, 10, 20, 0.82);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(124, 58, 237, 0.5);
+    border-radius: 14px;
+    padding: 10px 18px;
+    min-width: 320px;
+    max-width: 520px;
+    animation: slideIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  #banner.visible { display: flex; }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .icon {
+    width: 38px;
+    height: 38px;
+    background: linear-gradient(135deg, #7c3aed, #a855f7);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 18px;
+  }
+
+  .info { overflow: hidden; }
+
+  .label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: #a78bfa;
+    margin-bottom: 2px;
+  }
+
+  .title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #f0eeff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 380px;
+  }
+
+  .user {
+    font-size: 11px;
+    color: rgba(240, 238, 255, 0.5);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ── Barra de progresso ── */
+  .progress-wrap {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 3px;
+    background: rgba(124,58,237,0.2);
+    border-radius: 0 0 14px 14px;
+    overflow: hidden;
+  }
+  .progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #7c3aed, #a855f7);
+    width: 0%;
+    transition: width 1s linear;
+  }
+</style>
+</head>
+<body>
+
+<!-- Player oculto do YouTube -->
+<div id="yt-player"></div>
+
+<!-- Banner overlay -->
+<div id="banner">
+  <div class="icon">▶</div>
+  <div class="info">
+    <div class="label">♪ tocando agora</div>
+    <div class="title" id="now-title">—</div>
+    <div class="user" id="now-user">—</div>
+  </div>
+  <div class="progress-wrap">
+    <div class="progress-bar" id="progress-bar"></div>
+  </div>
+</div>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+// ============================================================
+// CONFIGURAÇÕES — mesma config do index.html
+// ============================================================
+const firebaseConfig = {
+  apiKey:            "AIzaSyCJTxuj9BIDaKjuOpncPR324XukHo1pBAM",
+  authDomain:        "mediashare-d352f.firebaseapp.com",
+  databaseURL:       "https://mediashare-d352f-default-rtdb.firebaseio.com",
+  projectId:         "mediashare-d352f",
+  storageBucket:     "mediashare-d352f.firebasestorage.app",
+  messagingSenderId: "25476047009",
+  appId:             "1:25476047009:web:ae529f5d66486a398850e0"
+};
+
+// ============================================================
+// INIT FIREBASE
+// ============================================================
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database().ref('queue');
+
+// ============================================================
+// ESTADO
+// ============================================================
+let player       = null;
+let ytReady      = false;
+let queue        = [];
+let currentKey   = null;
+let progressTimer = null;
+
+// ============================================================
+// YOUTUBE IFRAME API
+// ============================================================
+function onYouTubeIframeAPIReady() {
+  player = new YT.Player('yt-player', {
+    height: '1', width: '1',
+    playerVars: { autoplay: 1, controls: 0, playsinline: 1 },
+    events: {
+      onReady:       () => { ytReady = true; tryPlay(); },
+      onStateChange: onPlayerState
+    }
+  });
+}
+
+function onPlayerState(e) {
+  if (e.data === YT.PlayerState.ENDED) {
+    removeCurrentAndPlayNext();
+  }
+  if (e.data === YT.PlayerState.PLAYING) {
+    startProgress();
+  }
+  if (e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED) {
+    stopProgress();
+  }
+}
+
+// ============================================================
+// PROGRESSO
+// ============================================================
+function startProgress() {
+  stopProgress();
+  const bar = document.getElementById('progress-bar');
+  bar.style.transition = 'none';
+  bar.style.width = '0%';
+  setTimeout(() => {
+    const duration = player.getDuration();
+    if (duration > 0) {
+      bar.style.transition = `width ${duration}s linear`;
+      bar.style.width = '100%';
+    }
+  }, 100);
+}
+
+function stopProgress() {
+  const bar = document.getElementById('progress-bar');
+  bar.style.transition = 'none';
+  bar.style.width = '0%';
+}
+
+// ============================================================
+// FILA FIREBASE
+// ============================================================
+db.on('value', snap => {
+  const data = snap.val() || {};
+  queue = Object.entries(data).map(([key, val]) => ({ key, ...val }));
+  // Ordena por timestamp se existir
+  queue.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  tryPlay();
+});
+
+function tryPlay() {
+  if (!ytReady || queue.length === 0) {
+    hideBanner();
+    return;
+  }
+  const first = queue[0];
+  if (first.key === currentKey) return; // já está tocando
+  currentKey = first.key;
+  showBanner(first);
+  player.loadVideoById(first.id);
+  player.playVideo();
+}
+
+function removeCurrentAndPlayNext() {
+  if (!currentKey) return;
+  firebase.database().ref('queue/' + currentKey).remove();
+  currentKey = null;
+}
+
+// ============================================================
+// BANNER
+// ============================================================
+function showBanner(item) {
+  document.getElementById('now-title').textContent = item.title || 'Vídeo sem título';
+  document.getElementById('now-user').textContent  = '🎮 pedido por ' + (item.user || 'alguém');
+  const banner = document.getElementById('banner');
+  banner.classList.remove('visible');
+  void banner.offsetWidth; // reflow para reiniciar animação
+  banner.classList.add('visible');
+}
+
+function hideBanner() {
+  document.getElementById('banner').classList.remove('visible');
+  stopProgress();
+}
+</script>
+</body>
+</html>
