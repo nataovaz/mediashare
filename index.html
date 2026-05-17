@@ -7,6 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <style>
 /* =========================================================
    natanjogos Media Share — single file, host anywhere
@@ -236,6 +237,10 @@ button:active { transform: scale(.97); }
   <div class="pw-box">
     <p class="pw-title">🎮 Acesso Streamer / Mod</p>
     <div class="field">
+      <label>E-mail</label>
+      <input type="email" id="pw-email" placeholder="streamer@natanjogos.com" />
+    </div>
+    <div class="field" style="margin-top:8px;">
       <label>Senha</label>
       <input type="password" id="pw-input" placeholder="••••••" />
     </div>
@@ -377,8 +382,6 @@ button:active { transform: scale(.97); }
 // =============================================================
 // ⚙️  CONFIGURAÇÕES — EDITE AQUI
 // =============================================================
-const STREAMER_PASSWORD = "stream_natanjogos_123"; // Mude para a sua senha!
-
 const firebaseConfig = {
   apiKey:            "AIzaSyCJTxuj9BIDaKjuOpncPR324XukHo1pBAM",
   authDomain:        "mediashare-d352f.firebaseapp.com",
@@ -397,6 +400,7 @@ let qRef, curRef, setRef;
 function initFirebase() {
   try {
     firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
     db = firebase.database();
     qRef   = db.ref('ms/queue');
     curRef = db.ref('ms/current');
@@ -675,13 +679,11 @@ function closePw() {
 }
 
 function tryLogin() {
-  const val = document.getElementById('pw-input').value;
-  if (val === STREAMER_PASSWORD) {
-    closePw();
-    setMode('streamer');
-  } else {
-    showFlash(document.getElementById('pw-err'), 'Senha incorreta!');
-  }
+  const email = document.getElementById('pw-email').value;
+  const pass  = document.getElementById('pw-input').value;
+  auth.signInWithEmailAndPassword(email, pass)
+    .then(() => { closePw(); setMode('streamer'); })
+    .catch(() => { showFlash(document.getElementById('pw-err'), 'Email ou senha incorretos!'); });
 }
 
 document.getElementById('pw-input').addEventListener('keydown', e => {
