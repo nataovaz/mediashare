@@ -408,9 +408,16 @@ function initFirebase() {
     qRef   = db.ref('ms/queue');
     curRef = db.ref('ms/current');
     setRef = db.ref('ms/settings');
-    listenFirebase();
     document.getElementById('setup-banner').style.display =
       firebaseConfig.apiKey === '' ? 'block' : 'none';
+    auth.signInAnonymously()
+      .catch(e => {
+        console.error(e);
+        document.getElementById('setup-banner').style.display = 'block';
+        document.getElementById('setup-banner').textContent =
+          'Firebase bloqueou o acesso anonimo. Ative Authentication > Sign-in method > Anonymous e adicione seu dominio do GitHub Pages.';
+      })
+      .finally(listenFirebase);
   } catch(e) {
     document.getElementById('setup-banner').style.display = 'block';
   }
@@ -468,9 +475,9 @@ function esc(s) {
 function pending() { return localQueue.filter(v => v.id !== localCurrent?.id); }
 
 // --- Firebase writes ---
-async function fbSet(ref, data) { try { await ref.set(data); } catch(e) { console.error(e); } }
-async function fbPush(ref, data) { try { await ref.push(data); } catch(e) { console.error(e); } }
-async function fbRemove(ref) { try { await ref.remove(); } catch(e) { console.error(e); } }
+async function fbSet(ref, data) { await ref.set(data); }
+async function fbPush(ref, data) { await ref.push(data); }
+async function fbRemove(ref) { await ref.remove(); }
 async function removeQueuedById(id) {
   if (!id) return;
   await qRef.orderByChild('id').equalTo(id).once('value', snap => {
@@ -490,18 +497,33 @@ async function handleSubmit() {
 
   if (!name) { showFlash(err, 'Coloca seu nome!'); return; }
   const vid = ytId(url);
-  if (!vid)  { showFlash(err, 'Link do YouTube inválido!'); return; }
+  if (!vid)  { showFlash(err, 'Link do YouTube invalido!'); return; }
 
   const item = { id: uid(), videoId: vid, url, submitter: name, submittedAt: Date.now() };
-  await fbPush(qRef, item);
-  document.getElementById('v-url').value = '';
-  showFlash(ok, '✅ Vídeo adicionado à fila!', true);
+  try {
+    await fbPush(qRef, item);
+    document.getElementById('v-url').value = '';
+    showFlash(ok, 'Video adicionado a fila!', true);
+  } catch(e) {
+    console.error(e);
+    showFlash(err, firebaseErrorMessage(e));
+  }
 }
 
 function showFlash(el, msg, isOk) {
   if (msg !== undefined) el.textContent = msg;
   el.style.display = 'block';
   if (isOk) setTimeout(() => el.style.display = 'none', 4000);
+}
+
+function firebaseErrorMessage(e) {
+  if (e?.code === 'PERMISSION_DENIED' || String(e?.message || '').includes('PERMISSION_DENIED')) {
+    return 'Firebase bloqueou. Ative login anonimo e ajuste as regras do Realtime Database.';
+  }
+  if (e?.code === 'auth/unauthorized-domain') {
+    return 'Dominio nao autorizado no Firebase Auth. Adicione seu github.io em Authentication > Settings.';
+  }
+  return 'Nao consegui salvar no Firebase. Confira as regras do Realtime Database.';
 }
 
 // --- Playback ---

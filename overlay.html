@@ -6,6 +6,7 @@
 <title>natanjogos - Media Share Overlay</title>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -184,6 +185,7 @@ const firebaseConfig = {
 
 firebase.initializeApp(firebaseConfig);
 
+const auth = firebase.auth();
 const database = firebase.database();
 const queueRef = database.ref("ms/queue");
 const currentRef = database.ref("ms/current");
@@ -198,6 +200,10 @@ let activeVideoKey = "";
 let limitTimer = null;
 let clockTimer = null;
 let finishing = false;
+
+auth.signInAnonymously()
+  .catch(error => console.error("Firebase anonymous auth failed", error))
+  .finally(attachFirebaseListeners);
 
 function onYouTubeIframeAPIReady() {
   player = new YT.Player("yt-player", {
@@ -226,25 +232,27 @@ function onPlayerState(event) {
   }
 }
 
-queueRef.on("value", snap => {
-  const raw = snap.val() || {};
-  queue = Object.entries(raw)
-    .map(([key, value]) => ({ key, ...value }))
-    .sort((a, b) => Number(a.submittedAt || a.ts || 0) - Number(b.submittedAt || b.ts || 0));
-  maybeStartQueue();
-});
+function attachFirebaseListeners() {
+  queueRef.on("value", snap => {
+    const raw = snap.val() || {};
+    queue = Object.entries(raw)
+      .map(([key, value]) => ({ key, ...value }))
+      .sort((a, b) => Number(a.submittedAt || a.ts || 0) - Number(b.submittedAt || b.ts || 0));
+    maybeStartQueue();
+  }, error => console.error("Queue listener failed", error));
 
-currentRef.on("value", snap => {
-  current = snap.val() || null;
-  syncPlayback();
-  maybeStartQueue();
-});
+  currentRef.on("value", snap => {
+    current = snap.val() || null;
+    syncPlayback();
+    maybeStartQueue();
+  }, error => console.error("Current listener failed", error));
 
-settingsRef.on("value", snap => {
-  const settings = snap.val() || {};
-  maxDuration = Number(settings.maxDuration || 120);
-  syncClock();
-});
+  settingsRef.on("value", snap => {
+    const settings = snap.val() || {};
+    maxDuration = Number(settings.maxDuration || 120);
+    syncClock();
+  }, error => console.error("Settings listener failed", error));
+}
 
 function withPlaybackData(item) {
   return {
