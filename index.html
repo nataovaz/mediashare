@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natanjogos — Media Share</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<style>
+/* =========================================================
+   natanjogos Media Share — single file, host anywhere
+   ========================================================= */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --purple: #7c3aed;
+  --purple-light: rgba(124,58,237,.12);
+  --purple-border: rgba(124,58,237,.35);
+  --bg: #0d0d1a;
+  --bg2: #141428;
+  --bg3: #1c1c35;
+  --border: rgba(255,255,255,.08);
+  --border2: rgba(255,255,255,.14);
+  --text: #f0eeff;
+  --text2: rgba(240,238,255,.55);
+  --text3: rgba(240,238,255,.35);
+  --red: #ef4444;
+  --red-light: rgba(239,68,68,.12);
+  --green: #4ade80;
+  --green-light: rgba(74,222,128,.12);
+  --radius: 10px;
+  --radius-lg: 14px;
+}
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.5;
+}
+
+/* Layout */
+.container { max-width: 960px; margin: 0 auto; padding: 24px 20px; }
+.header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
+.logo { display: flex; align-items: center; gap: 10px; }
+.logo-bar { width: 3px; height: 26px; background: var(--purple); border-radius: 2px; }
+.logo-text { font-size: 17px; font-weight: 700; letter-spacing: -.3px; }
+.logo-text span { color: var(--purple); }
+.mode-btns { display: flex; gap: 6px; }
+.grid-streamer { display: grid; grid-template-columns: minmax(0,1fr) 270px; gap: 16px; }
+@media(max-width:700px){ .grid-streamer { grid-template-columns: 1fr; } }
+
+/* Cards */
+.card {
+  background: var(--bg2);
+  border: .5px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+}
+.card + .card { margin-top: 14px; }
+.card-title {
+  font-size: 11px; font-weight: 600; color: var(--text2);
+  text-transform: uppercase; letter-spacing: .7px;
+  margin-bottom: 14px;
+  display: flex; align-items: center; gap: 6px;
+}
+
+/* Buttons */
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  transition: opacity .12s, transform .08s;
+  border: .5px solid var(--border2);
+  background: transparent;
+  color: var(--text);
+  padding: 8px 16px;
+}
+button:hover { opacity: .85; }
+button:active { transform: scale(.97); }
+.btn-primary { background: var(--purple); border-color: var(--purple); color: #fff; }
+.btn-primary:hover { opacity: .9; }
+.btn-danger { background: var(--red-light); border-color: rgba(239,68,68,.3); color: var(--red); }
+.btn-icon { padding: 7px 10px; }
+.btn-full { width: 100%; padding: 11px; font-size: 14px; }
+
+/* Inputs */
+.field { margin-bottom: 12px; }
+.field label { display: block; font-size: 11px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 5px; }
+.field input {
+  width: 100%;
+  background: var(--bg3);
+  border: .5px solid var(--border2);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  padding: 9px 13px;
+  outline: none;
+  transition: border-color .15s;
+}
+.field input:focus { border-color: var(--purple); box-shadow: 0 0 0 2px var(--purple-light); }
+.field input::placeholder { color: var(--text3); }
+
+/* Range slider */
+.range-row { display: flex; align-items: center; gap: 12px; }
+.range-row input[type=range] { flex: 1; accent-color: var(--purple); }
+.range-val { font-size: 14px; font-weight: 600; color: var(--purple); min-width: 44px; text-align: right; }
+
+/* Queue items */
+.queue-list { display: flex; flex-direction: column; }
+.qi {
+  display: flex; align-items: center; gap: 11px;
+  padding: 9px 0;
+  border-bottom: .5px solid var(--border);
+}
+.qi:last-child { border-bottom: none; }
+.qi-thumb {
+  width: 76px; height: 43px;
+  border-radius: 6px; object-fit: cover;
+  background: var(--bg3); flex-shrink: 0;
+}
+.qi-info { flex: 1; min-width: 0; }
+.qi-id { font-size: 12px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qi-by { font-size: 11px; color: var(--text3); margin-top: 1px; }
+.qi-num { font-size: 12px; font-weight: 700; color: var(--purple); min-width: 18px; }
+.qi-actions { display: flex; gap: 5px; flex-shrink: 0; }
+.qi-actions button { padding: 5px 9px; font-size: 12px; }
+
+/* Player */
+.player-wrap { border-radius: var(--radius-lg); overflow: hidden; }
+.player-empty {
+  aspect-ratio: 16/9;
+  background: var(--bg3);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  color: var(--text2); font-size: 14px;
+}
+.player-empty svg { opacity: .4; }
+.player-iframe-wrap { position: relative; padding-bottom: 56.25%; height: 0; }
+.player-iframe-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: none; }
+.player-controls { padding: 14px 18px; border-top: .5px solid var(--border); }
+.ctrl-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.ctrl-by { font-size: 13px; color: var(--text2); }
+.ctrl-by strong { color: var(--text); }
+.ctrl-timer { font-size: 13px; font-weight: 700; color: var(--purple); }
+.ctrl-timer.urgent { color: var(--red); }
+.pbar-wrap { height: 3px; background: var(--bg3); border-radius: 2px; margin-bottom: 12px; overflow: hidden; }
+.pbar { height: 100%; width: 0%; background: var(--purple); border-radius: 2px; transition: width 1s linear, background .3s; }
+.pbar.urgent { background: var(--red); }
+.ctrl-btns { display: flex; gap: 8px; }
+
+/* Alert / flash messages */
+.flash {
+  padding: 9px 13px; border-radius: var(--radius);
+  font-size: 13px; font-weight: 500; margin-bottom: 12px;
+  display: none;
+}
+.flash-ok { background: var(--green-light); color: var(--green); border: .5px solid rgba(74,222,128,.3); }
+.flash-err { background: var(--red-light); color: var(--red); border: .5px solid rgba(239,68,68,.3); }
+
+/* Now playing badge */
+.now-playing {
+  background: var(--purple-light);
+  border: .5px solid var(--purple-border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  display: none;
+}
+.np-label { font-size: 10px; font-weight: 700; color: var(--purple); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 3px; }
+.np-text { font-size: 13px; color: var(--text2); }
+.np-text strong { color: var(--text); }
+
+/* Setup banner */
+.setup-banner {
+  background: rgba(239,68,68,.08);
+  border: .5px solid rgba(239,68,68,.25);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  font-size: 13px;
+  color: var(--red);
+  margin-bottom: 20px;
+  display: none;
+}
+
+/* Password overlay */
+.pw-overlay {
+  background: rgba(0,0,0,.7);
+  position: fixed; inset: 0; z-index: 50;
+  display: none; align-items: center; justify-content: center;
+}
+.pw-overlay.show { display: flex; }
+.pw-box {
+  background: var(--bg2);
+  border: .5px solid var(--border2);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  width: 320px;
+}
+.pw-title { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+
+/* Tabs */
+.tabs { display: flex; gap: 6px; background: var(--bg3); border-radius: var(--radius); padding: 4px; display: inline-flex; }
+.tab { padding: 6px 16px; border-radius: 7px; border: none; background: transparent; color: var(--text2); font-size: 13px; font-weight: 500; }
+.tab.active { background: var(--purple); color: #fff; }
+
+/* Empty state */
+.empty { color: var(--text3); font-size: 14px; padding: 16px 0; text-align: center; }
+
+/* Info box */
+.info-box {
+  background: var(--bg3);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--text2);
+  margin-top: 14px;
+  border-left: 3px solid var(--purple);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.info-box code {
+  display: block; background: var(--bg); padding: 6px 10px;
+  border-radius: 6px; font-size: 12px; color: var(--text);
+  margin-top: 6px; word-break: break-all;
+}
+</style>
+</head>
+<body>
+
+<!-- ======================= PASSWORD MODAL ======================= -->
+<div class="pw-overlay" id="pw-overlay">
+  <div class="pw-box">
+    <p class="pw-title">🎮 Acesso Streamer / Mod</p>
+    <div class="field">
+      <label>Senha</label>
+      <input type="password" id="pw-input" placeholder="••••••" />
+    </div>
+    <p class="flash flash-err" id="pw-err"></p>
+    <div style="display:flex;gap:8px;margin-top:4px;">
+      <button onclick="closePw()" style="flex:1;">Cancelar</button>
+      <button class="btn-primary" onclick="tryLogin()" style="flex:1;">Entrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========================= MAIN APP ========================== -->
+<div class="container">
+
+  <!-- Setup warning (shown if Firebase not configured) -->
+  <div class="setup-banner" id="setup-banner">
+    ⚠️ Firebase não configurado! Edite as configurações no início do arquivo JS antes de publicar.
+  </div>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="logo">
+      <div class="logo-bar"></div>
+      <div class="logo-text">NATAN<span>JOGOS</span> <span style="color:var(--text2);font-weight:400;">— Media Share</span></div>
+    </div>
+    <div class="mode-btns">
+      <div class="tabs">
+        <button class="tab active" id="tab-viewer" onclick="setMode('viewer')">Viewer</button>
+        <button class="tab" id="tab-streamer" onclick="openPw()">Streamer / Mod</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== VIEWER MODE =================== -->
+  <div id="view-viewer">
+
+    <div class="now-playing" id="vnp">
+      <div class="np-label">🎬 Tocando agora</div>
+      <div class="np-text" id="vnp-text"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Enviar vídeo pra fila
+      </div>
+
+      <div class="field">
+        <label>Seu nome / usuário</label>
+        <input type="text" id="v-name" placeholder="Ex: xSniper99" maxlength="30" />
+      </div>
+      <div class="field">
+        <label>Link do YouTube</label>
+        <input type="url" id="v-url" placeholder="https://youtube.com/watch?v=..." />
+      </div>
+
+      <div class="flash flash-ok" id="v-ok">✅ Vídeo adicionado à fila!</div>
+      <div class="flash flash-err" id="v-err"></div>
+
+      <button class="btn-primary btn-full" onclick="handleSubmit()">Adicionar à Fila</button>
+    </div>
+
+    <div class="card" style="margin-top:14px;">
+      <div class="card-title">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        Fila — <span id="v-count">0</span> vídeos
+      </div>
+      <div class="queue-list" id="v-queue">
+        <div class="empty">Fila vazia — seja o primeiro!</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== STREAMER MODE =================== -->
+  <div id="view-streamer" style="display:none;">
+    <div class="grid-streamer">
+
+      <!-- Left column -->
+      <div>
+        <!-- Player -->
+        <div class="card" style="padding:0;overflow:hidden;" id="player-card">
+          <div id="player-area">
+            <div class="player-empty" id="player-empty">
+              <svg width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <span id="player-empty-msg">Nenhum vídeo na fila</span>
+              <button class="btn-primary" id="start-btn" onclick="startNext()" style="display:none;">▶ Iniciar fila</button>
+            </div>
+          </div>
+          <div id="player-controls" style="display:none;">
+            <div class="player-controls">
+              <div class="ctrl-row">
+                <span class="ctrl-by">enviado por <strong id="ctrl-who"></strong></span>
+                <span class="ctrl-timer" id="ctrl-timer">0:00</span>
+              </div>
+              <div class="pbar-wrap">
+                <div class="pbar" id="pbar"></div>
+              </div>
+              <div class="ctrl-btns">
+                <button onclick="skipCurrent()" style="flex:1;font-weight:600;">⏭ Skipar</button>
+                <button class="btn-danger btn-icon" onclick="removeCurrent()" title="Remover">🗑</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Settings -->
+        <div class="card" style="margin-top:14px;">
+          <div class="card-title">⏱ Limite de tempo por vídeo</div>
+          <div class="range-row">
+            <input type="range" min="30" max="600" step="30" id="dur-slider" oninput="updateDuration(this.value)" />
+            <span class="range-val" id="dur-lbl">2:00</span>
+          </div>
+        </div>
+
+        <!-- Link info -->
+        <div class="info-box">
+          <strong style="color:var(--text);">Link para o chat</strong> — coloca no Cloudbot pra anunciar a cada 10 min:
+          <code id="share-link">Cole o link do seu site aqui</code>
+        </div>
+      </div>
+
+      <!-- Right column: queue -->
+      <div class="card" style="overflow-y:auto;max-height:600px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <div class="card-title" style="margin:0;">Fila — <span id="s-count">0</span></div>
+          <button class="btn-danger" onclick="clearAll()" style="font-size:12px;padding:5px 10px;">🗑 Limpar tudo</button>
+        </div>
+        <div class="queue-list" id="s-queue">
+          <div class="empty">Fila vazia</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+// =============================================================
+// ⚙️  CONFIGURAÇÕES — EDITE AQUI
+// =============================================================
+const STREAMER_PASSWORD = "mod123"; // Mude para a sua senha!
+
+const firebaseConfig = {
+  apiKey:            "AIzaSyCJTxuj9BIDaKjuOpncPR324XukHo1pBAM",
+  authDomain:        "mediashare-d352f.firebaseapp.com",
+  databaseURL:       "https://mediashare-d352f-default-rtdb.firebaseio.com",
+  projectId:         "mediashare-d352f",
+  storageBucket:     "mediashare-d352f.firebasestorage.app",
+  messagingSenderId: "25476047009",
+  appId:             "1:25476047009:web:ae529f5d66486a398850e0"
+};
+// =============================================================
+
+// --- Firebase init ---
+let db = null;
+let qRef, curRef, setRef;
+
+function initFirebase() {
+  try {
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.database();
+    qRef   = db.ref('ms/queue');
+    curRef = db.ref('ms/current');
+    setRef = db.ref('ms/settings');
+    listenFirebase();
+    document.getElementById('setup-banner').style.display =
+      firebaseConfig.apiKey === '' ? 'block' : 'none';
+  } catch(e) {
+    document.getElementById('setup-banner').style.display = 'block';
+  }
+}
+
+function listenFirebase() {
+  qRef.on('value', snap => {
+    const raw = snap.val();
+    localQueue = raw
+      ? Object.values(raw).sort((a,b) => a.submittedAt - b.submittedAt)
+      : [];
+    renderAll();
+  });
+  curRef.on('value', snap => {
+    const prev = localCurrent?.id;
+    localCurrent = snap.val() || null;
+    if (localCurrent?.id !== prev && mode === 'streamer') startTimer();
+    renderAll();
+  });
+  setRef.on('value', snap => {
+    const d = snap.val();
+    if (d?.maxDuration) {
+      localMaxDuration = d.maxDuration;
+      document.getElementById('dur-slider').value = localMaxDuration;
+      document.getElementById('dur-lbl').textContent = fmt(localMaxDuration);
+    }
+  });
+}
+
+// --- App state ---
+let localQueue = [];
+let localCurrent = null;
+let localMaxDuration = 120;
+let mode = 'viewer';
+let tLeft = 0;
+let tInt = null;
+
+// --- Helpers ---
+function ytId(url) {
+  try {
+    const m = url.match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+    return m ? m[1] : null;
+  } catch(e) { return null; }
+}
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
+function fmt(s) {
+  s = Math.max(0, Math.round(Number(s)));
+  return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0');
+}
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function pending() { return localQueue.filter(v => v.id !== localCurrent?.id); }
+
+// --- Firebase writes ---
+async function fbSet(ref, data) { try { await ref.set(data); } catch(e) { console.error(e); } }
+async function fbPush(ref, data) { try { await ref.push(data); } catch(e) { console.error(e); } }
+async function fbRemove(ref) { try { await ref.remove(); } catch(e) { console.error(e); } }
+
+// --- Submit ---
+async function handleSubmit() {
+  const name = document.getElementById('v-name').value.trim();
+  const url  = document.getElementById('v-url').value.trim();
+  const ok   = document.getElementById('v-ok');
+  const err  = document.getElementById('v-err');
+
+  ok.style.display = 'none';
+  err.style.display = 'none';
+
+  if (!name) { showFlash(err, 'Coloca seu nome!'); return; }
+  const vid = ytId(url);
+  if (!vid)  { showFlash(err, 'Link do YouTube inválido!'); return; }
+
+  const item = { id: uid(), videoId: vid, url, submitter: name, submittedAt: Date.now() };
+  await fbPush(qRef, item);
+  document.getElementById('v-url').value = '';
+  showFlash(ok, '✅ Vídeo adicionado à fila!', true);
+}
+
+function showFlash(el, msg, isOk) {
+  if (msg !== undefined) el.textContent = msg;
+  el.style.display = 'block';
+  if (isOk) setTimeout(() => el.style.display = 'none', 4000);
+}
+
+// --- Playback ---
+async function playSingle(id) {
+  const item = localQueue.find(v => v.id === id);
+  if (!item) return;
+  await fbSet(curRef, item);
+  startTimer();
+}
+
+async function startNext() {
+  const p = pending();
+  if (!p.length) return;
+  await fbSet(curRef, p[0]);
+  startTimer();
+}
+
+async function skipCurrent() {
+  clearInterval(tInt);
+  const p = pending();
+  if (p.length > 0) {
+    await fbSet(curRef, p[0]);
+    startTimer();
+  } else {
+    await fbRemove(curRef);
+  }
+}
+
+async function removeCurrent() {
+  if (!localCurrent) return;
+  clearInterval(tInt);
+  await qRef.orderByChild('id').equalTo(localCurrent.id).once('value', snap => {
+    snap.forEach(child => child.ref.remove());
+  });
+  const p = pending().filter(v => v.id !== localCurrent?.id);
+  if (p.length > 0) { await fbSet(curRef, p[0]); startTimer(); }
+  else await fbRemove(curRef);
+}
+
+async function removeItem(id) {
+  await qRef.orderByChild('id').equalTo(id).once('value', snap => {
+    snap.forEach(child => child.ref.remove());
+  });
+}
+
+async function clearAll() {
+  clearInterval(tInt);
+  await fbRemove(qRef);
+  await fbRemove(curRef);
+}
+
+function updateDuration(v) {
+  localMaxDuration = Number(v);
+  document.getElementById('dur-lbl').textContent = fmt(localMaxDuration);
+  fbSet(setRef, { maxDuration: localMaxDuration });
+}
+
+// --- Timer ---
+function startTimer() {
+  clearInterval(tInt);
+  if (!localCurrent) return;
+  tLeft = localMaxDuration;
+  updateTimerUI();
+  tInt = setInterval(async () => {
+    tLeft--;
+    updateTimerUI();
+    if (tLeft <= 0) await skipCurrent();
+  }, 1000);
+}
+
+function updateTimerUI() {
+  const te  = document.getElementById('ctrl-timer');
+  const pb  = document.getElementById('pbar');
+  const pct = Math.round(((localMaxDuration - tLeft) / localMaxDuration) * 100);
+  if (te) {
+    te.textContent = fmt(tLeft) + ' restantes';
+    te.className = 'ctrl-timer' + (tLeft < 20 ? ' urgent' : '');
+  }
+  if (pb) {
+    pb.style.width = pct + '%';
+    pb.className = 'pbar' + (tLeft < 20 ? ' urgent' : '');
+  }
+}
+
+// --- Render ---
+function renderAll() {
+  const p = pending();
+  const c = localCurrent;
+
+  // Viewer now playing
+  const vnp = document.getElementById('vnp');
+  if (c) {
+    vnp.style.display = 'block';
+    document.getElementById('vnp-text').innerHTML =
+      `enviado por <strong>${esc(c.submitter)}</strong>`;
+  } else {
+    vnp.style.display = 'none';
+  }
+
+  // Viewer queue
+  document.getElementById('v-count').textContent = p.length;
+  const vq = document.getElementById('v-queue');
+  vq.innerHTML = p.length === 0
+    ? '<div class="empty">Fila vazia — seja o primeiro!</div>'
+    : p.map((item, i) => `
+        <div class="qi">
+          <span class="qi-num">#${i+1}</span>
+          <img class="qi-thumb" src="https://img.youtube.com/vi/${esc(item.videoId)}/mqdefault.jpg" alt="">
+          <div class="qi-info">
+            <div class="qi-id">youtu.be/${esc(item.videoId)}</div>
+            <div class="qi-by">por ${esc(item.submitter)}</div>
+          </div>
+        </div>`).join('');
+
+  // Streamer queue
+  document.getElementById('s-count').textContent = p.length;
+  const sq = document.getElementById('s-queue');
+  sq.innerHTML = p.length === 0
+    ? '<div class="empty">Fila vazia</div>'
+    : p.map((item, i) => `
+        <div class="qi">
+          <img class="qi-thumb" src="https://img.youtube.com/vi/${esc(item.videoId)}/mqdefault.jpg" alt="">
+          <div class="qi-info">
+            <div class="qi-id">#${i+1} ${esc(item.videoId)}</div>
+            <div class="qi-by">por ${esc(item.submitter)}</div>
+          </div>
+          <div class="qi-actions">
+            <button onclick="playSingle('${esc(item.id)}')" title="Tocar agora">▶</button>
+            <button class="btn-danger" onclick="removeItem('${esc(item.id)}')" title="Remover">✕</button>
+          </div>
+        </div>`).join('');
+
+  // Streamer player
+  if (mode === 'streamer') {
+    const pw  = document.getElementById('player-area');
+    const pc  = document.getElementById('player-controls');
+    if (c) {
+      const ex = pw.querySelector('iframe');
+      if (!ex || ex.dataset.vid !== c.id) {
+        pw.innerHTML = `
+          <div class="player-iframe-wrap">
+            <iframe data-vid="${esc(c.id)}"
+              src="https://www.youtube.com/embed/${esc(c.videoId)}?autoplay=1&rel=0"
+              allow="autoplay; encrypted-media" allowfullscreen></iframe>
+          </div>`;
+      }
+      document.getElementById('ctrl-who').textContent = c.submitter;
+      pc.style.display = 'block';
+    } else {
+      const hasPending = p.length > 0;
+      pw.innerHTML = `
+        <div class="player-empty">
+          <svg width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <span>${hasPending ? 'Fila pronta' : 'Nenhum vídeo na fila'}</span>
+          ${hasPending ? '<button class="btn-primary" onclick="startNext()">▶ Iniciar fila</button>' : ''}
+        </div>`;
+      pc.style.display = 'none';
+      clearInterval(tInt);
+    }
+  }
+}
+
+// --- Mode toggle ---
+function setMode(m) {
+  mode = m;
+  document.getElementById('view-viewer').style.display   = m === 'viewer'   ? 'block' : 'none';
+  document.getElementById('view-streamer').style.display = m === 'streamer' ? 'block' : 'none';
+  document.getElementById('tab-viewer').className   = 'tab' + (m === 'viewer'   ? ' active' : '');
+  document.getElementById('tab-streamer').className = 'tab' + (m === 'streamer' ? ' active' : '');
+  if (m === 'streamer') startTimer();
+}
+
+// --- Password modal ---
+function openPw() {
+  if (mode === 'streamer') { setMode('viewer'); return; }
+  document.getElementById('pw-overlay').classList.add('show');
+  setTimeout(() => document.getElementById('pw-input').focus(), 60);
+}
+
+function closePw() {
+  document.getElementById('pw-overlay').classList.remove('show');
+  document.getElementById('pw-input').value = '';
+  document.getElementById('pw-err').style.display = 'none';
+}
+
+function tryLogin() {
+  const val = document.getElementById('pw-input').value;
+  if (val === STREAMER_PASSWORD) {
+    closePw();
+    setMode('streamer');
+  } else {
+    showFlash(document.getElementById('pw-err'), 'Senha incorreta!');
+  }
+}
+
+document.getElementById('pw-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') tryLogin();
+});
+
+// --- Share link ---
+document.getElementById('share-link').textContent = window.location.href.split('?')[0];
+
+// --- Init ---
+document.getElementById('dur-slider').value = localMaxDuration;
+document.getElementById('dur-lbl').textContent = fmt(localMaxDuration);
+initFirebase();
+renderAll();
+</script>
+</body>
+</html>
