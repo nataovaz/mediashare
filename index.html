@@ -354,14 +354,21 @@ button:disabled { cursor: not-allowed; opacity: .55; transform: none; }
             <input type="range" min="30" max="600" step="30" id="dur-slider" oninput="updateDuration(this.value)" />
             <span class="range-val" id="dur-lbl">2:00</span>
           </div>
+          <div class="card-title" style="margin-top:14px;">🔊 Volume do overlay</div>
+          <div class="range-row">
+            <input type="range" min="0" max="100" step="5" id="vol-slider" value="60" oninput="updateVolume(this.value)" />
+            <span class="range-val" id="vol-lbl">60%</span>
+          </div>
         </div>
 
         <!-- Link info -->
         <div class="info-box">
           <strong style="color:var(--text);">Link para o chat</strong> — coloca no Cloudbot pra anunciar a cada 10 min:
           <code id="share-link">Cole o link do seu site aqui</code>
-          <strong style="color:var(--text);display:block;margin-top:12px;">Link do overlay</strong> - usa este no Browser Source do OBS/StreamElements:
+          <strong style="color:var(--text);display:block;margin-top:12px;">Link do overlay</strong> — usa este no Browser Source do OBS/StreamElements:
           <code id="overlay-link">Cole o link do overlay aqui</code>
+          <strong style="color:var(--text);display:block;margin-top:12px;">Controlador desktop</strong> — abre numa janela compacta pra skipar e ver a fila:
+          <code id="ctrl-link">Cole o link do controller aqui</code>
         </div>
       </div>
 
@@ -446,6 +453,13 @@ function listenFirebase() {
       document.getElementById('dur-slider').value = localMaxDuration;
       document.getElementById('dur-lbl').textContent = fmt(localMaxDuration);
     }
+    if (d?.volume !== undefined) {
+      localVolume = Number(d.volume);
+      const vs = document.getElementById('vol-slider');
+      if (vs) vs.value = localVolume;
+      const vl = document.getElementById('vol-lbl');
+      if (vl) vl.textContent = localVolume + '%';
+    }
   });
 }
 
@@ -453,6 +467,7 @@ function listenFirebase() {
 let localQueue = [];
 let localCurrent = null;
 let localMaxDuration = 120;
+let localVolume = 60;
 let mode = 'viewer';
 let tLeft = 0;
 let tInt = null;
@@ -460,10 +475,30 @@ let submitCooldownInt = null;
 const SUBMIT_COOLDOWN_MS = 8000;
 
 // --- Helpers ---
+function isPlaylistOnly(url) {
+  if (/youtube\.com\/playlist/i.test(url)) return true;
+  return /[?&]list=/.test(url) && !/[?&]v=/.test(url) && !url.includes('youtu.be/');
+}
+function stripListParam(rawUrl) {
+  try {
+    const u = new URL(rawUrl);
+    u.searchParams.delete('list');
+    u.searchParams.delete('index');
+    return u.toString();
+  } catch(e) { return rawUrl; }
+}
 function ytId(url) {
   try {
+    if (isPlaylistOnly(url)) return null;
     const m = url.match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
     return m ? m[1] : null;
+  } catch(e) { return null; }
+}
+async function fetchTitle(videoId) {
+  try {
+    const r = await fetch(`https://noembed.com/embed?url=https://youtube.com/watch?v=${videoId}`);
+    const d = await r.json();
+    return d.title || null;
   } catch(e) { return null; }
 }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
@@ -539,10 +574,13 @@ async function handleSubmit() {
   err.style.display = 'none';
 
   if (!name) { showFlash(err, 'Coloca seu nome!'); return; }
+  if (isPlaylistOnly(url)) { showFlash(err, 'Playlists nao sao permitidas! Envie o link de um video individual.'); return; }
   const vid = ytId(url);
   if (!vid)  { showFlash(err, 'Link do YouTube invalido!'); return; }
 
-  const item = { id: uid(), videoId: vid, url, submitter: name, submittedAt: Date.now() };
+  const title = await fetchTitle(vid);
+  const cleanUrl = stripListParam(url);
+  const item = { id: uid(), videoId: vid, url: cleanUrl, submitter: name, submittedAt: Date.now(), title: title || '' };
   try {
     await reserveSubmitSlot();
     await fbPush(qRef, item);
@@ -666,7 +704,12 @@ async function clearAll() {
 function updateDuration(v) {
   localMaxDuration = Number(v);
   document.getElementById('dur-lbl').textContent = fmt(localMaxDuration);
-  fbSet(setRef, { maxDuration: localMaxDuration });
+  fbSet(setRef, { maxDuration: localMaxDuration, volume: localVolume });
+}
+function updateVolume(v) {
+  localVolume = Number(v);
+  document.getElementById('vol-lbl').textContent = localVolume + '%';
+  fbSet(setRef, { maxDuration: localMaxDuration, volume: localVolume });
 }
 
 // --- Timer ---
@@ -710,25 +753,29 @@ function renderAll() {
   if (c) {
     vnp.style.display = 'block';
     document.getElementById('vnp-text').innerHTML =
-      `enviado por <strong>${esc(c.submitter)}</strong>`;
+      `<strong>${esc(c.title || c.videoId)}</strong> — enviado por <strong>${esc(c.submitter)}</strong>`;
   } else {
     vnp.style.display = 'none';
   }
 
-  // Viewer queue
-  document.getElementById('v-count').textContent = p.length;
+  // Viewer queue (mostra todos, incluindo o atual com badge)
+  const vList = localQueue;
+  document.getElementById('v-count').textContent = vList.length;
   const vq = document.getElementById('v-queue');
-  vq.innerHTML = p.length === 0
+  vq.innerHTML = vList.length === 0
     ? '<div class="empty">Fila vazia — seja o primeiro!</div>'
-    : p.map((item, i) => `
-        <div class="qi">
-          <span class="qi-num">#${i+1}</span>
+    : vList.map((item, i) => {
+        const isPlaying = item.id === c?.id;
+        return `
+        <div class="qi" style="${isPlaying ? 'background:var(--purple-light);border-radius:var(--radius);padding:9px 8px;' : ''}">
+          <span class="qi-num">${isPlaying ? '▶' : '#'+(i+1)}</span>
           <img class="qi-thumb" src="https://img.youtube.com/vi/${esc(item.videoId)}/mqdefault.jpg" alt="">
           <div class="qi-info">
-            <div class="qi-id">youtu.be/${esc(item.videoId)}</div>
-            <div class="qi-by">por ${esc(item.submitter)}</div>
+            <div class="qi-id">${esc(item.title || 'youtu.be/' + item.videoId)}</div>
+            <div class="qi-by">por ${esc(item.submitter)}${isPlaying ? ' — <span style="color:var(--purple);font-weight:600;">Tocando</span>' : ''}</div>
           </div>
-        </div>`).join('');
+        </div>`;
+      }).join('');
 
   // Streamer queue
   document.getElementById('s-count').textContent = p.length;
@@ -739,7 +786,7 @@ function renderAll() {
         <div class="qi">
           <img class="qi-thumb" src="https://img.youtube.com/vi/${esc(item.videoId)}/mqdefault.jpg" alt="">
           <div class="qi-info">
-            <div class="qi-id">#${i+1} ${esc(item.videoId)}</div>
+            <div class="qi-id">#${i+1} ${esc(item.title || item.videoId)}</div>
             <div class="qi-by">por ${esc(item.submitter)}</div>
           </div>
           <div class="qi-actions">
@@ -758,7 +805,7 @@ function renderAll() {
         pw.innerHTML = `
           <div class="player-iframe-wrap">
             <iframe data-vid="${esc(c.id)}"
-              src="https://www.youtube.com/embed/${esc(c.videoId)}?autoplay=1&rel=0"
+              src="https://www.youtube-nocookie.com/embed/${esc(c.videoId)}?autoplay=1&rel=0&modestbranding=1&iv_load_policy=3"
               allow="autoplay; encrypted-media" allowfullscreen></iframe>
           </div>`;
       }
@@ -828,6 +875,7 @@ document.getElementById('pw-email').addEventListener('keydown', e => {
 // --- Share link ---
 document.getElementById('share-link').textContent = window.location.href.split('?')[0];
 document.getElementById('overlay-link').textContent = new URL('overlay.html', window.location.href).href;
+document.getElementById('ctrl-link').textContent = new URL('controller.html', window.location.href).href;
 
 // --- Init ---
 document.getElementById('dur-slider').value = localMaxDuration;

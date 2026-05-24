@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natanjogos — Controller</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --purple: #7c3aed;
+  --purple-light: rgba(124,58,237,.12);
+  --purple-border: rgba(124,58,237,.35);
+  --bg: #0d0d1a;
+  --bg2: #141428;
+  --bg3: #1c1c35;
+  --border: rgba(255,255,255,.08);
+  --border2: rgba(255,255,255,.14);
+  --text: #f0eeff;
+  --text2: rgba(240,238,255,.55);
+  --text3: rgba(240,238,255,.35);
+  --red: #ef4444;
+  --red-light: rgba(239,68,68,.12);
+  --green: #4ade80;
+  --radius: 10px;
+  --radius-lg: 14px;
+}
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.5;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+/* Header */
+.header {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 16px; padding-bottom: 12px;
+  border-bottom: .5px solid var(--border);
+}
+.logo-bar { width: 3px; height: 22px; background: var(--purple); border-radius: 2px; }
+.logo-text { font-size: 14px; font-weight: 700; letter-spacing: -.3px; }
+.logo-text span { color: var(--purple); }
+
+/* Cards */
+.card {
+  background: var(--bg2);
+  border: .5px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.card-title {
+  font-size: 10px; font-weight: 600; color: var(--text2);
+  text-transform: uppercase; letter-spacing: .7px;
+  margin-bottom: 10px;
+  display: flex; align-items: center; gap: 6px;
+}
+
+/* Buttons */
+button {
+  font-family: inherit; cursor: pointer;
+  border-radius: var(--radius); font-size: 13px; font-weight: 500;
+  transition: opacity .12s, transform .08s;
+  border: .5px solid var(--border2);
+  background: transparent; color: var(--text);
+  padding: 7px 14px;
+}
+button:hover { opacity: .85; }
+button:active { transform: scale(.97); }
+button:disabled { cursor: not-allowed; opacity: .55; }
+.btn-primary { background: var(--purple); border-color: var(--purple); color: #fff; }
+.btn-danger { background: var(--red-light); border-color: rgba(239,68,68,.3); color: var(--red); }
+.btn-full { width: 100%; padding: 10px; }
+
+/* Now playing */
+.np-card {
+  background: var(--purple-light);
+  border: .5px solid var(--purple-border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.np-label { font-size: 10px; font-weight: 700; color: var(--purple); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 4px; }
+.np-title { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-by { font-size: 12px; color: var(--text2); margin-top: 2px; }
+.timer-row { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+.timer-text { font-size: 16px; font-weight: 800; color: var(--purple); font-variant-numeric: tabular-nums; }
+.timer-text.urgent { color: var(--red); }
+.pbar-wrap { height: 3px; background: var(--bg3); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.pbar { height: 100%; width: 0%; background: var(--purple); border-radius: 2px; transition: width 1s linear, background .3s; }
+.pbar.urgent { background: var(--red); }
+.ctrl-btns { display: flex; gap: 8px; margin-top: 10px; }
+.ctrl-btns button { flex: 1; }
+
+/* Volume */
+.range-row { display: flex; align-items: center; gap: 10px; }
+.range-row input[type=range] { flex: 1; accent-color: var(--purple); }
+.range-val { font-size: 14px; font-weight: 600; color: var(--purple); min-width: 40px; text-align: right; }
+
+/* Queue */
+.queue-wrap { max-height: 320px; overflow-y: auto; }
+.qi {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0;
+  border-bottom: .5px solid var(--border);
+}
+.qi:last-child { border-bottom: none; }
+.qi-thumb { width: 64px; height: 36px; border-radius: 5px; object-fit: cover; background: var(--bg3); flex-shrink: 0; }
+.qi-info { flex: 1; min-width: 0; }
+.qi-id { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qi-by { font-size: 11px; color: var(--text3); margin-top: 1px; }
+.qi-num { font-size: 12px; font-weight: 700; color: var(--purple); min-width: 16px; }
+.qi-actions button { padding: 4px 8px; font-size: 12px; }
+.empty { color: var(--text3); font-size: 13px; padding: 14px 0; text-align: center; }
+
+/* Login */
+.login-wrap {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh; margin: -16px;
+}
+.login-box {
+  background: var(--bg2); border: .5px solid var(--border2);
+  border-radius: var(--radius-lg); padding: 24px; width: 320px;
+}
+.login-title { font-size: 16px; font-weight: 700; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+.field { margin-bottom: 10px; }
+.field label { display: block; font-size: 10px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 4px; }
+.field input {
+  width: 100%; background: var(--bg3); border: .5px solid var(--border2);
+  border-radius: var(--radius); color: var(--text); font-family: inherit;
+  font-size: 14px; padding: 8px 12px; outline: none;
+}
+.field input:focus { border-color: var(--purple); }
+.field input::placeholder { color: var(--text3); }
+.login-err { color: var(--red); font-size: 12px; margin-bottom: 8px; display: none; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-view" class="login-wrap">
+  <div class="login-box">
+    <div class="login-title"><div class="logo-bar"></div> Controller Login</div>
+    <div class="field">
+      <label>E-mail</label>
+      <input type="email" id="login-email" placeholder="streamer@natanjogos.com" />
+    </div>
+    <div class="field">
+      <label>Senha</label>
+      <input type="password" id="login-pass" placeholder="••••••" />
+    </div>
+    <p class="login-err" id="login-err"></p>
+    <button class="btn-primary btn-full" onclick="doLogin()">Entrar</button>
+  </div>
+</div>
+
+<!-- MAIN CONTROLLER -->
+<div id="main-view" style="display:none;">
+
+  <div class="header">
+    <div class="logo-bar"></div>
+    <div class="logo-text">NATAN<span>JOGOS</span> <span style="color:var(--text2);font-weight:400;">Controller</span></div>
+  </div>
+
+  <!-- Now playing -->
+  <div id="np-card" class="np-card" style="display:none;">
+    <div class="np-label">Tocando agora</div>
+    <div class="np-title" id="np-title">—</div>
+    <div class="np-by" id="np-by"></div>
+    <div class="timer-row">
+      <span class="timer-text" id="timer-text">0:00</span>
+    </div>
+    <div class="pbar-wrap"><div class="pbar" id="pbar"></div></div>
+    <div class="ctrl-btns">
+      <button onclick="skipCurrent()">⏭ Skipar</button>
+      <button class="btn-danger" onclick="removeCurrent()">🗑 Remover</button>
+    </div>
+  </div>
+
+  <!-- Empty / start -->
+  <div id="np-empty" class="card" style="text-align:center;">
+    <div style="color:var(--text3);margin-bottom:8px;">Nenhum video tocando</div>
+    <button class="btn-primary" id="start-btn" onclick="startNext()" style="display:none;">▶ Iniciar fila</button>
+  </div>
+
+  <!-- Volume -->
+  <div class="card">
+    <div class="card-title">🔊 Volume</div>
+    <div class="range-row">
+      <input type="range" min="0" max="100" step="5" id="vol-slider" value="60" oninput="updateVolume(this.value)" />
+      <span class="range-val" id="vol-lbl">60%</span>
+    </div>
+  </div>
+
+  <!-- Queue -->
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <div class="card-title" style="margin:0;">Fila — <span id="q-count">0</span></div>
+      <button class="btn-danger" onclick="clearAll()" style="font-size:11px;padding:4px 8px;">🗑 Limpar</button>
+    </div>
+    <div class="queue-wrap" id="q-list">
+      <div class="empty">Fila vazia</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const firebaseConfig = {
+  apiKey:            "AIzaSyCJTxuj9BIDaKjuOpncPR324XukHo1pBAM",
+  authDomain:        "mediashare-d352f.firebaseapp.com",
+  databaseURL:       "https://mediashare-d352f-default-rtdb.firebaseio.com",
+  projectId:         "mediashare-d352f",
+  storageBucket:     "mediashare-d352f.firebasestorage.app",
+  messagingSenderId: "25476047009",
+  appId:             "1:25476047009:web:ae529f5d66486a398850e0"
+};
+
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.database();
+const qRef   = db.ref('ms/queue');
+const curRef = db.ref('ms/current');
+const setRef = db.ref('ms/settings');
+
+let localQueue = [];
+let localCurrent = null;
+let localMaxDuration = 120;
+let localVolume = 60;
+let tLeft = 0;
+let tInt = null;
+
+// --- Helpers ---
+function fmt(s) {
+  s = Math.max(0, Math.round(Number(s)));
+  return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0');
+}
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function pending() { return localQueue.filter(v => v.id !== localCurrent?.id); }
+
+// --- Login ---
+function doLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const pass  = document.getElementById('login-pass').value;
+  const errEl = document.getElementById('login-err');
+  errEl.style.display = 'none';
+  auth.signInWithEmailAndPassword(email, pass)
+    .then(() => {
+      document.getElementById('login-view').style.display = 'none';
+      document.getElementById('main-view').style.display = 'block';
+      listen();
+    })
+    .catch(e => {
+      errEl.textContent = e?.code === 'auth/unauthorized-domain'
+        ? 'Dominio nao autorizado no Firebase.'
+        : 'Email ou senha incorretos!';
+      errEl.style.display = 'block';
+    });
+}
+document.getElementById('login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+document.getElementById('login-email').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+// --- Firebase listeners ---
+function listen() {
+  qRef.on('value', snap => {
+    const raw = snap.val();
+    localQueue = raw ? Object.values(raw).sort((a,b) => a.submittedAt - b.submittedAt) : [];
+    renderAll();
+  });
+  curRef.on('value', snap => {
+    localCurrent = snap.val() || null;
+    startTimer();
+    renderAll();
+  });
+  setRef.on('value', snap => {
+    const d = snap.val();
+    if (d?.maxDuration) localMaxDuration = d.maxDuration;
+    if (d?.volume !== undefined) {
+      localVolume = Number(d.volume);
+      document.getElementById('vol-slider').value = localVolume;
+      document.getElementById('vol-lbl').textContent = localVolume + '%';
+    }
+  });
+}
+
+// --- Firebase writes ---
+async function fbSet(ref, data) { await ref.set(data); }
+async function fbRemove(ref) { await ref.remove(); }
+
+async function removeQueuedById(id) {
+  if (!id) return;
+  await qRef.orderByChild('id').equalTo(id).once('value', snap => {
+    snap.forEach(child => child.ref.remove());
+  });
+}
+
+// --- Playback controls ---
+async function startNext() {
+  const p = pending();
+  if (!p.length) return;
+  await fbSet(curRef, { ...p[0], startedAt: Date.now(), duration: localMaxDuration });
+}
+
+async function skipCurrent() {
+  clearInterval(tInt);
+  const currentId = localCurrent?.id;
+  const p = pending();
+  await removeQueuedById(currentId);
+  if (p.length > 0) {
+    await fbSet(curRef, { ...p[0], startedAt: Date.now(), duration: localMaxDuration });
+  } else {
+    await fbRemove(curRef);
+  }
+}
+
+async function removeCurrent() {
+  if (!localCurrent) return;
+  clearInterval(tInt);
+  await removeQueuedById(localCurrent.id);
+  const p = pending().filter(v => v.id !== localCurrent?.id);
+  if (p.length > 0) {
+    await fbSet(curRef, { ...p[0], startedAt: Date.now(), duration: localMaxDuration });
+  } else {
+    await fbRemove(curRef);
+  }
+}
+
+async function removeItem(id) { await removeQueuedById(id); }
+
+async function clearAll() {
+  clearInterval(tInt);
+  await fbRemove(qRef);
+  await fbRemove(curRef);
+}
+
+function updateVolume(v) {
+  localVolume = Number(v);
+  document.getElementById('vol-lbl').textContent = localVolume + '%';
+  fbSet(setRef, { maxDuration: localMaxDuration, volume: localVolume });
+}
+
+// --- Timer ---
+function startTimer() {
+  clearInterval(tInt);
+  if (!localCurrent) return;
+  const duration = Number(localCurrent.duration || localMaxDuration);
+  const startedAt = Number(localCurrent.startedAt || Date.now());
+  const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  tLeft = Math.max(0, duration - elapsed);
+  updateTimerUI();
+  tInt = setInterval(async () => {
+    tLeft--;
+    updateTimerUI();
+    if (tLeft <= 0) await skipCurrent();
+  }, 1000);
+}
+
+function updateTimerUI() {
+  const te = document.getElementById('timer-text');
+  const pb = document.getElementById('pbar');
+  const duration = Number(localCurrent?.duration || localMaxDuration);
+  const pct = Math.round(((duration - tLeft) / duration) * 100);
+  if (te) {
+    te.textContent = fmt(tLeft);
+    te.className = 'timer-text' + (tLeft < 20 ? ' urgent' : '');
+  }
+  if (pb) {
+    pb.style.width = pct + '%';
+    pb.className = 'pbar' + (tLeft < 20 ? ' urgent' : '');
+  }
+}
+
+// --- Render ---
+function renderAll() {
+  const c = localCurrent;
+  const p = pending();
+  const npCard  = document.getElementById('np-card');
+  const npEmpty = document.getElementById('np-empty');
+
+  if (c) {
+    npCard.style.display = 'block';
+    npEmpty.style.display = 'none';
+    document.getElementById('np-title').textContent = c.title || 'youtu.be/' + c.videoId;
+    document.getElementById('np-by').textContent = 'por ' + (c.submitter || '?');
+  } else {
+    npCard.style.display = 'none';
+    npEmpty.style.display = 'block';
+    document.getElementById('start-btn').style.display = p.length > 0 ? 'inline-block' : 'none';
+    clearInterval(tInt);
+  }
+
+  // Queue
+  document.getElementById('q-count').textContent = p.length;
+  const ql = document.getElementById('q-list');
+  ql.innerHTML = p.length === 0
+    ? '<div class="empty">Fila vazia</div>'
+    : p.map((item, i) => `
+        <div class="qi">
+          <span class="qi-num">#${i+1}</span>
+          <img class="qi-thumb" src="https://img.youtube.com/vi/${esc(item.videoId)}/mqdefault.jpg" alt="">
+          <div class="qi-info">
+            <div class="qi-id">${esc(item.title || item.videoId)}</div>
+            <div class="qi-by">por ${esc(item.submitter)}</div>
+          </div>
+          <div class="qi-actions">
+            <button onclick="playSingle('${esc(item.id)}')" title="Tocar">▶</button>
+            <button class="btn-danger" onclick="removeItem('${esc(item.id)}')" title="Remover">✕</button>
+          </div>
+        </div>`).join('');
+}
+
+async function playSingle(id) {
+  const item = localQueue.find(v => v.id === id);
+  if (!item) return;
+  await fbSet(curRef, { ...item, startedAt: Date.now(), duration: localMaxDuration });
+}
+</script>
+</body>
+</html>

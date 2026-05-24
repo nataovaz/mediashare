@@ -50,13 +50,24 @@
     background: #000;
     border: 2px solid rgba(124, 58, 237, 0.75);
     border-radius: 12px 12px 0 0;
+    position: relative;
   }
 
-  #yt-player,
-  #yt-player iframe {
+  #video-player {
     display: block;
     width: 100%;
     height: 100%;
+    object-fit: contain;
+    background: #000;
+  }
+
+  #yt-fallback {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: none;
+    display: none;
   }
 
   #banner {
@@ -155,7 +166,8 @@
 <body>
   <div id="overlay-root">
     <div id="video-shell">
-      <div id="yt-player"></div>
+      <video id="video-player" autoplay playsinline></video>
+      <iframe id="yt-fallback" allow="autoplay; encrypted-media" allowfullscreen></iframe>
     </div>
     <div id="banner">
       <div class="play-mark" aria-hidden="true"></div>
@@ -171,7 +183,6 @@
     </div>
   </div>
 
-<script src="https://www.youtube.com/iframe_api"></script>
 <script>
 const firebaseConfig = {
   apiKey:            "AIzaSyCJTxuj9BIDaKjuOpncPR324XukHo1pBAM",
@@ -191,77 +202,87 @@ const queueRef = database.ref("ms/queue");
 const currentRef = database.ref("ms/current");
 const settingsRef = database.ref("ms/settings");
 
-let player = null;
-let ytReady = false;
+const video = document.getElementById("video-player");
+const ytFallback = document.getElementById("yt-fallback");
+
 let queue = [];
 let current = null;
 let maxDuration = 120;
+let volume = 60;
 let activeVideoKey = "";
 let limitTimer = null;
 let clockTimer = null;
-let playRetryTimer = null;
 let finishing = false;
+let usingFallback = false;
+
+// Invidious instances to try (ad-free YouTube frontends)
+const INVIDIOUS_INSTANCES = [
+  "inv.tux.pizza",
+  "invidious.fdn.fr",
+  "vid.puffyan.us",
+  "invidious.nerdvpn.de"
+];
 
 auth.signInAnonymously()
   .catch(error => console.error("Firebase anonymous auth failed", error))
   .finally(attachFirebaseListeners);
 
-function onYouTubeIframeAPIReady() {
-  player = new YT.Player("yt-player", {
-    width: "100%",
-    height: "100%",
-    playerVars: {
-      autoplay: 1,
-      controls: 0,
-      enablejsapi: 1,
-      fs: 0,
-      iv_load_policy: 3,
-      rel: 0,
-      modestbranding: 1,
-      playsinline: 1,
-      origin: window.location.origin
-    },
-    events: {
-      onReady: () => {
-        ytReady = true;
-        player.setVolume(100);
-        player.unMute();
-        syncPlayback();
-      },
-      onStateChange: onPlayerState
-    }
-  });
+// --- Video stream fetching (ad-free via Invidious) ---
+async function getVideoStream(videoId) {
+  for (const host of INVIDIOUS_INSTANCES) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(
+        `https://${host}/api/v1/videos/${videoId}?fields=formatStreams,title`,
+        { signal: controller.signal }
+      );
+      clearTimeout(timeout);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const stream = data.formatStreams?.find(f =>
+        f.container === "mp4" && f.qualityLabel && parseInt(f.qualityLabel) >= 480
+      ) || data.formatStreams?.find(f => f.container === "mp4") || data.formatStreams?.[0];
+      if (stream?.url) return { url: stream.url, title: data.title || "" };
+    } catch(e) { continue; }
+  }
+  return null;
 }
 
-function onPlayerState(event) {
-  if (event.data === YT.PlayerState.ENDED) {
-    stopPlayRetries();
-    finishCurrent();
+async function loadVideo(videoId, startSeconds) {
+  usingFallback = false;
+  video.style.display = "block";
+  ytFallback.style.display = "none";
+
+  const stream = await getVideoStream(videoId);
+  if (stream?.url) {
+    video.src = stream.url;
+    video.currentTime = Math.max(0, startSeconds || 0);
+    video.volume = volume / 100;
+    try { await video.play(); } catch(e) { console.warn("autoplay blocked", e); }
     return;
   }
 
-  if (event.data === YT.PlayerState.PLAYING) {
-    stopPlayRetries();
-    player.setVolume(100);
-    player.unMute();
-    return;
-  }
-
-  if (
-    event.data === YT.PlayerState.UNSTARTED ||
-    event.data === YT.PlayerState.CUED ||
-    event.data === YT.PlayerState.PAUSED
-  ) {
-    requestPlay();
-  }
+  // Fallback: YouTube embed (may have ads)
+  console.warn("Invidious failed, falling back to YouTube embed");
+  usingFallback = true;
+  video.style.display = "none";
+  ytFallback.style.display = "block";
+  ytFallback.src = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&start=${Math.floor(startSeconds || 0)}&rel=0&modestbranding=1&iv_load_policy=3`;
 }
 
+// Video ended → play next
+video.addEventListener("ended", () => {
+  if (!finishing) finishCurrent();
+});
+
+// --- Firebase listeners ---
 function attachFirebaseListeners() {
   queueRef.on("value", snap => {
     const raw = snap.val() || {};
     queue = Object.entries(raw)
       .map(([key, value]) => ({ key, ...value }))
-      .sort((a, b) => Number(a.submittedAt || a.ts || 0) - Number(b.submittedAt || b.ts || 0));
+      .sort((a, b) => Number(a.submittedAt || 0) - Number(b.submittedAt || 0));
     maybeStartQueue();
   }, error => console.error("Queue listener failed", error));
 
@@ -274,6 +295,10 @@ function attachFirebaseListeners() {
   settingsRef.on("value", snap => {
     const settings = snap.val() || {};
     maxDuration = Number(settings.maxDuration || 120);
+    if (settings.volume !== undefined) {
+      volume = Number(settings.volume);
+      if (!usingFallback) video.volume = volume / 100;
+    }
     syncClock();
   }, error => console.error("Settings listener failed", error));
 }
@@ -288,7 +313,6 @@ function withPlaybackData(item) {
 
 function maybeStartQueue() {
   if (current || !queue.length || finishing) return;
-
   currentRef.transaction(existing => {
     if (existing || !queue.length) return existing;
     return withPlaybackData(queue[0]);
@@ -318,53 +342,11 @@ function syncPlayback() {
 
   limitTimer = setTimeout(finishCurrent, (remaining + 0.5) * 1000);
 
-  if (!ytReady || !player) return;
-
   const videoKey = `${current.id || ""}:${current.videoId}`;
   if (videoKey !== activeVideoKey) {
     activeVideoKey = videoKey;
-    stopPlayRetries();
-    player.loadVideoById({
-      videoId: current.videoId,
-      startSeconds: Math.max(0, elapsed)
-    });
-    requestPlay();
-  } else {
-    requestPlay();
+    loadVideo(current.videoId, Math.max(0, elapsed));
   }
-}
-
-function requestPlay() {
-  if (!ytReady || !player || !current) return;
-
-  let attempts = 0;
-  stopPlayRetries();
-
-  const tryOnce = () => {
-    if (!current || !player) {
-      stopPlayRetries();
-      return;
-    }
-
-    try {
-      player.setVolume(100);
-      player.unMute();
-      player.playVideo();
-    } catch(error) {
-      console.error("YouTube play failed", error);
-    }
-
-    attempts++;
-    if (attempts >= 10) stopPlayRetries();
-  };
-
-  tryOnce();
-  playRetryTimer = setInterval(tryOnce, 750);
-}
-
-function stopPlayRetries() {
-  clearInterval(playRetryTimer);
-  playRetryTimer = null;
 }
 
 function showOverlay(item) {
@@ -379,7 +361,9 @@ function hideOverlay() {
   document.getElementById("overlay-root").classList.remove("visible");
   clearTimeout(limitTimer);
   clearInterval(clockTimer);
-  stopPlayRetries();
+  video.pause();
+  video.removeAttribute("src");
+  ytFallback.src = "";
   document.getElementById("progress-bar").style.width = "0%";
 }
 
