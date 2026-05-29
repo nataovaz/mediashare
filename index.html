@@ -514,7 +514,13 @@ function esc(s) {
 }
 function pending() { return localQueue.filter(v => v.id !== localCurrent?.id); }
 
-// --- Invidious (ad-free YouTube streams) ---
+// --- Ad-free YouTube streams (Piped + Invidious) ---
+const PIPED_INSTANCES = [
+  "pipedapi.kavin.rocks",
+  "pipedapi.adminforge.de",
+  "pipedapi.in.projectsegfau.lt",
+  "pipedapi.r4fo.com"
+];
 const INVIDIOUS_INSTANCES = [
   "inv.tux.pizza",
   "invidious.fdn.fr",
@@ -525,16 +531,37 @@ const INVIDIOUS_INSTANCES = [
 let streamerActiveVid = '';
 let streamerUsingFallback = false;
 
+async function fetchWithTimeout(url, ms) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(t);
+    return res;
+  } catch(e) { clearTimeout(t); throw e; }
+}
+
 async function getVideoStream(videoId) {
+  // 1) Tentar Piped primeiro (mais confiavel)
+  for (const host of PIPED_INSTANCES) {
+    try {
+      const res = await fetchWithTimeout(`https://${host}/streams/${videoId}`, 6000);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const vs = data.videoStreams?.filter(s => s.videoOnly === false && s.mimeType?.includes('video/mp4'));
+      const pick = vs?.find(s => parseInt(s.quality) >= 480) || vs?.[0];
+      if (pick?.url) return pick.url;
+      // Se nao achou mp4 combinado, tenta qualquer stream de video
+      const any = data.videoStreams?.find(s => s.videoOnly === false);
+      if (any?.url) return any.url;
+    } catch(e) { continue; }
+  }
+  // 2) Tentar Invidious como backup
   for (const host of INVIDIOUS_INSTANCES) {
     try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 5000);
-      const res = await fetch(
-        `https://${host}/api/v1/videos/${videoId}?fields=formatStreams,title`,
-        { signal: ctrl.signal }
+      const res = await fetchWithTimeout(
+        `https://${host}/api/v1/videos/${videoId}?fields=formatStreams,title`, 5000
       );
-      clearTimeout(t);
       if (!res.ok) continue;
       const data = await res.json();
       const stream = data.formatStreams?.find(f =>
