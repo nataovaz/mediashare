@@ -145,20 +145,11 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 </head>
 <body>
 
-<!-- LOGIN -->
+<!-- LOGIN (auto-login, mostrado apenas se falhar) -->
 <div id="login-view" class="login-wrap">
   <div class="login-box">
-    <div class="login-title"><div class="logo-bar"></div> Controller Login</div>
-    <div class="field">
-      <label>E-mail</label>
-      <input type="email" id="login-email" placeholder="streamer@natanjogos.com" />
-    </div>
-    <div class="field">
-      <label>Senha</label>
-      <input type="password" id="login-pass" placeholder="••••••" />
-    </div>
+    <div class="login-title"><div class="logo-bar"></div> Conectando...</div>
     <p class="login-err" id="login-err"></p>
-    <button class="btn-primary btn-full" onclick="doLogin()">Entrar</button>
   </div>
 </div>
 
@@ -233,7 +224,7 @@ const setRef = db.ref('ms/settings');
 
 let localQueue = [];
 let localCurrent = null;
-let localMaxDuration = 120;
+let localMaxDuration = 300;
 let localVolume = 60;
 let tLeft = 0;
 let tInt = null;
@@ -248,27 +239,18 @@ function esc(s) {
 }
 function pending() { return localQueue.filter(v => v.id !== localCurrent?.id); }
 
-// --- Login ---
-function doLogin() {
-  const email = document.getElementById('login-email').value.trim();
-  const pass  = document.getElementById('login-pass').value;
-  const errEl = document.getElementById('login-err');
-  errEl.style.display = 'none';
-  auth.signInWithEmailAndPassword(email, pass)
-    .then(() => {
-      document.getElementById('login-view').style.display = 'none';
-      document.getElementById('main-view').style.display = 'block';
-      listen();
-    })
-    .catch(e => {
-      errEl.textContent = e?.code === 'auth/unauthorized-domain'
-        ? 'Dominio nao autorizado no Firebase.'
-        : 'Email ou senha incorretos!';
-      errEl.style.display = 'block';
-    });
-}
-document.getElementById('login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
-document.getElementById('login-email').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+// --- Auto login ---
+auth.signInWithEmailAndPassword('streamer@natanjogos.com', 'mod_stream_natanjogos')
+  .then(() => {
+    document.getElementById('login-view').style.display = 'none';
+    document.getElementById('main-view').style.display = 'block';
+    listen();
+  })
+  .catch(e => {
+    const errEl = document.getElementById('login-err');
+    errEl.textContent = 'Falha no login automatico: ' + (e?.message || 'erro desconhecido');
+    errEl.style.display = 'block';
+  });
 
 // --- Firebase listeners ---
 function listen() {

@@ -143,7 +143,8 @@ button:disabled { cursor: not-allowed; opacity: .55; transform: none; }
 }
 .player-empty svg { opacity: .4; }
 .player-iframe-wrap { position: relative; padding-bottom: 56.25%; height: 0; }
-.player-iframe-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: none; }
+.player-iframe-wrap iframe,
+.player-iframe-wrap video { position: absolute; inset: 0; width: 100%; height: 100%; border: none; object-fit: contain; background: #000; }
 .player-controls { padding: 14px 18px; border-top: .5px solid var(--border); }
 .ctrl-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .ctrl-by { font-size: 13px; color: var(--text2); }
@@ -351,7 +352,7 @@ button:disabled { cursor: not-allowed; opacity: .55; transform: none; }
         <div class="card" style="margin-top:14px;">
           <div class="card-title">⏱ Limite de tempo por vídeo</div>
           <div class="range-row">
-            <input type="range" min="30" max="600" step="30" id="dur-slider" oninput="updateDuration(this.value)" />
+            <input type="range" min="30" max="900" step="30" id="dur-slider" oninput="updateDuration(this.value)" />
             <span class="range-val" id="dur-lbl">2:00</span>
           </div>
           <div class="card-title" style="margin-top:14px;">🔊 Volume do overlay</div>
@@ -466,7 +467,7 @@ function listenFirebase() {
 // --- App state ---
 let localQueue = [];
 let localCurrent = null;
-let localMaxDuration = 120;
+let localMaxDuration = 300;
 let localVolume = 60;
 let mode = 'viewer';
 let tLeft = 0;
@@ -512,6 +513,63 @@ function esc(s) {
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 function pending() { return localQueue.filter(v => v.id !== localCurrent?.id); }
+
+// --- Invidious (ad-free YouTube streams) ---
+const INVIDIOUS_INSTANCES = [
+  "inv.tux.pizza",
+  "invidious.fdn.fr",
+  "vid.puffyan.us",
+  "invidious.nerdvpn.de",
+  "invidious.privacyredirect.com"
+];
+let streamerActiveVid = '';
+let streamerUsingFallback = false;
+
+async function getVideoStream(videoId) {
+  for (const host of INVIDIOUS_INSTANCES) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 5000);
+      const res = await fetch(
+        `https://${host}/api/v1/videos/${videoId}?fields=formatStreams,title`,
+        { signal: ctrl.signal }
+      );
+      clearTimeout(t);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const stream = data.formatStreams?.find(f =>
+        f.container === 'mp4' && f.qualityLabel && parseInt(f.qualityLabel) >= 480
+      ) || data.formatStreams?.find(f => f.container === 'mp4') || data.formatStreams?.[0];
+      if (stream?.url) return stream.url;
+    } catch(e) { continue; }
+  }
+  return null;
+}
+
+async function loadStreamerVideo(videoId, container) {
+  streamerUsingFallback = false;
+  const streamUrl = await getVideoStream(videoId);
+  if (streamUrl) {
+    container.innerHTML = `
+      <div class="player-iframe-wrap">
+        <video data-vid="${esc(videoId)}" autoplay playsinline></video>
+      </div>`;
+    const vid = container.querySelector('video');
+    vid.src = streamUrl;
+    vid.volume = localVolume / 100;
+    vid.play().catch(() => {});
+    vid.addEventListener('ended', () => { if (mode === 'streamer') skipCurrent(); });
+    return;
+  }
+  // Fallback: YouTube embed (may have ads)
+  streamerUsingFallback = true;
+  container.innerHTML = `
+    <div class="player-iframe-wrap">
+      <iframe data-vid="${esc(videoId)}"
+        src="https://www.youtube-nocookie.com/embed/${esc(videoId)}?autoplay=1&rel=0&modestbranding=1&iv_load_policy=3"
+        allow="autoplay; encrypted-media" allowfullscreen></iframe>
+    </div>`;
+}
 
 // --- Firebase writes ---
 async function fbSet(ref, data) { await ref.set(data); }
@@ -709,6 +767,8 @@ function updateDuration(v) {
 function updateVolume(v) {
   localVolume = Number(v);
   document.getElementById('vol-lbl').textContent = localVolume + '%';
+  const vid = document.querySelector('#player-area video');
+  if (vid) vid.volume = localVolume / 100;
   fbSet(setRef, { maxDuration: localMaxDuration, volume: localVolume });
 }
 
@@ -800,14 +860,9 @@ function renderAll() {
     const pw  = document.getElementById('player-area');
     const pc  = document.getElementById('player-controls');
     if (c) {
-      const ex = pw.querySelector('iframe');
-      if (!ex || ex.dataset.vid !== c.id) {
-        pw.innerHTML = `
-          <div class="player-iframe-wrap">
-            <iframe data-vid="${esc(c.id)}"
-              src="https://www.youtube-nocookie.com/embed/${esc(c.videoId)}?autoplay=1&rel=0&modestbranding=1&iv_load_policy=3"
-              allow="autoplay; encrypted-media" allowfullscreen></iframe>
-          </div>`;
+      const ex = pw.querySelector('video, iframe');
+      if (!ex || ex.dataset.vid !== c.videoId) {
+        loadStreamerVideo(c.videoId, pw);
       }
       document.getElementById('ctrl-who').textContent = c.submitter;
       pc.style.display = 'block';

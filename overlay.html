@@ -207,7 +207,7 @@ const ytFallback = document.getElementById("yt-fallback");
 
 let queue = [];
 let current = null;
-let maxDuration = 120;
+let maxDuration = 300;
 let volume = 60;
 let activeVideoKey = "";
 let limitTimer = null;
@@ -220,7 +220,8 @@ const INVIDIOUS_INSTANCES = [
   "inv.tux.pizza",
   "invidious.fdn.fr",
   "vid.puffyan.us",
-  "invidious.nerdvpn.de"
+  "invidious.nerdvpn.de",
+  "invidious.privacyredirect.com"
 ];
 
 auth.signInAnonymously()
