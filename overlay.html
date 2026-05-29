@@ -215,87 +215,52 @@ let clockTimer = null;
 let finishing = false;
 let usingFallback = false;
 
-// Ad-free YouTube streams (Piped + Invidious)
-const PIPED_INSTANCES = [
-  "pipedapi.kavin.rocks",
-  "pipedapi.adminforge.de",
-  "pipedapi.in.projectsegfau.lt",
-  "pipedapi.r4fo.com"
-];
-const INVIDIOUS_INSTANCES = [
-  "inv.tux.pizza",
-  "invidious.fdn.fr",
-  "vid.puffyan.us",
-  "invidious.nerdvpn.de",
-  "invidious.privacyredirect.com"
+// --- Ad-free embeds (Piped + Invidious direto, sem depender de API) ---
+const ADFREE_EMBEDS = [
+  id => `https://piped.kavin.rocks/embed/${id}?autoplay=1&loop=0`,
+  id => `https://piped.adminforge.de/embed/${id}?autoplay=1&loop=0`,
+  id => `https://inv.tux.pizza/embed/${id}?autoplay=1&quality=dash&local=true`,
+  id => `https://invidious.fdn.fr/embed/${id}?autoplay=1&quality=dash&local=true`,
+  id => `https://yewtu.be/embed/${id}?autoplay=1&quality=dash&local=true`,
+  id => `https://vid.puffyan.us/embed/${id}?autoplay=1&quality=dash&local=true`,
 ];
 
-auth.signInAnonymously()
-  .catch(error => console.error("Firebase anonymous auth failed", error))
-  .finally(attachFirebaseListeners);
-
-async function fetchWithTimeout(url, ms) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ms);
-  try {
-    const res = await fetch(url, { signal: ctrl.signal });
-    clearTimeout(t);
-    return res;
-  } catch(e) { clearTimeout(t); throw e; }
-}
-
-// --- Video stream fetching (ad-free via Piped + Invidious) ---
-async function getVideoStream(videoId) {
-  // 1) Piped primeiro
-  for (const host of PIPED_INSTANCES) {
+let cachedEmbedFn = null;
+async function findWorkingEmbed() {
+  if (cachedEmbedFn) return cachedEmbedFn;
+  for (const fn of ADFREE_EMBEDS) {
+    const host = new URL(fn('test')).origin;
     try {
-      const res = await fetchWithTimeout(`https://${host}/streams/${videoId}`, 6000);
-      if (!res.ok) continue;
-      const data = await res.json();
-      const vs = data.videoStreams?.filter(s => s.videoOnly === false && s.mimeType?.includes("video/mp4"));
-      const pick = vs?.find(s => parseInt(s.quality) >= 480) || vs?.[0];
-      if (pick?.url) return { url: pick.url, title: data.title || "" };
-      const any = data.videoStreams?.find(s => s.videoOnly === false);
-      if (any?.url) return { url: any.url, title: data.title || "" };
-    } catch(e) { continue; }
-  }
-  // 2) Invidious como backup
-  for (const host of INVIDIOUS_INSTANCES) {
-    try {
-      const res = await fetchWithTimeout(
-        `https://${host}/api/v1/videos/${videoId}?fields=formatStreams,title`, 5000
-      );
-      if (!res.ok) continue;
-      const data = await res.json();
-      const stream = data.formatStreams?.find(f =>
-        f.container === "mp4" && f.qualityLabel && parseInt(f.qualityLabel) >= 480
-      ) || data.formatStreams?.find(f => f.container === "mp4") || data.formatStreams?.[0];
-      if (stream?.url) return { url: stream.url, title: data.title || "" };
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 4000);
+      await fetch(host, { mode: 'no-cors', signal: ctrl.signal });
+      clearTimeout(t);
+      cachedEmbedFn = fn;
+      console.log('Overlay usando embed ad-free:', host);
+      return fn;
     } catch(e) { continue; }
   }
   return null;
 }
 
+function getEmbedSrc(videoId) {
+  if (cachedEmbedFn) return cachedEmbedFn(videoId);
+  return ADFREE_EMBEDS[0](videoId);
+}
+
+auth.signInAnonymously()
+  .catch(error => console.error("Firebase anonymous auth failed", error))
+  .finally(() => { findWorkingEmbed(); attachFirebaseListeners(); });
+
 async function loadVideo(videoId, startSeconds) {
+  // Usa embed ad-free no iframe (Piped/Invidious)
   usingFallback = false;
-  video.style.display = "block";
-  ytFallback.style.display = "none";
-
-  const stream = await getVideoStream(videoId);
-  if (stream?.url) {
-    video.src = stream.url;
-    video.currentTime = Math.max(0, startSeconds || 0);
-    video.volume = volume / 100;
-    try { await video.play(); } catch(e) { console.warn("autoplay blocked", e); }
-    return;
-  }
-
-  // Fallback: YouTube embed (may have ads)
-  console.warn("Invidious failed, falling back to YouTube embed");
-  usingFallback = true;
   video.style.display = "none";
   ytFallback.style.display = "block";
-  ytFallback.src = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&start=${Math.floor(startSeconds || 0)}&rel=0&modestbranding=1&iv_load_policy=3`;
+  const start = Math.floor(startSeconds || 0);
+  let src = getEmbedSrc(videoId);
+  if (start > 0) src += `&start=${start}`;
+  ytFallback.src = src;
 }
 
 // Video ended → play next

@@ -514,89 +514,47 @@ function esc(s) {
 }
 function pending() { return localQueue.filter(v => v.id !== localCurrent?.id); }
 
-// --- Ad-free YouTube streams (Piped + Invidious) ---
-const PIPED_INSTANCES = [
-  "pipedapi.kavin.rocks",
-  "pipedapi.adminforge.de",
-  "pipedapi.in.projectsegfau.lt",
-  "pipedapi.r4fo.com"
+// --- Ad-free embeds (Piped + Invidious iframe direto, sem API) ---
+const ADFREE_EMBEDS = [
+  id => `https://piped.kavin.rocks/embed/${id}?autoplay=1&loop=0`,
+  id => `https://piped.adminforge.de/embed/${id}?autoplay=1&loop=0`,
+  id => `https://inv.tux.pizza/embed/${id}?autoplay=1&quality=dash&local=true`,
+  id => `https://invidious.fdn.fr/embed/${id}?autoplay=1&quality=dash&local=true`,
+  id => `https://yewtu.be/embed/${id}?autoplay=1&quality=dash&local=true`,
+  id => `https://vid.puffyan.us/embed/${id}?autoplay=1&quality=dash&local=true`,
 ];
-const INVIDIOUS_INSTANCES = [
-  "inv.tux.pizza",
-  "invidious.fdn.fr",
-  "vid.puffyan.us",
-  "invidious.nerdvpn.de",
-  "invidious.privacyredirect.com"
-];
-let streamerActiveVid = '';
-let streamerUsingFallback = false;
+let embedIndex = 0;
 
-async function fetchWithTimeout(url, ms) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ms);
-  try {
-    const res = await fetch(url, { signal: ctrl.signal });
-    clearTimeout(t);
-    return res;
-  } catch(e) { clearTimeout(t); throw e; }
-}
-
-async function getVideoStream(videoId) {
-  // 1) Tentar Piped primeiro (mais confiavel)
-  for (const host of PIPED_INSTANCES) {
+// Testa qual instancia esta viva e cacheia
+let cachedEmbedFn = null;
+async function findWorkingEmbed() {
+  if (cachedEmbedFn) return cachedEmbedFn;
+  for (let i = 0; i < ADFREE_EMBEDS.length; i++) {
+    const fn = ADFREE_EMBEDS[i];
+    const testUrl = fn('dQw4w9WgXcQ'); // URL de teste
+    const host = new URL(testUrl).origin;
     try {
-      const res = await fetchWithTimeout(`https://${host}/streams/${videoId}`, 6000);
-      if (!res.ok) continue;
-      const data = await res.json();
-      const vs = data.videoStreams?.filter(s => s.videoOnly === false && s.mimeType?.includes('video/mp4'));
-      const pick = vs?.find(s => parseInt(s.quality) >= 480) || vs?.[0];
-      if (pick?.url) return pick.url;
-      // Se nao achou mp4 combinado, tenta qualquer stream de video
-      const any = data.videoStreams?.find(s => s.videoOnly === false);
-      if (any?.url) return any.url;
-    } catch(e) { continue; }
-  }
-  // 2) Tentar Invidious como backup
-  for (const host of INVIDIOUS_INSTANCES) {
-    try {
-      const res = await fetchWithTimeout(
-        `https://${host}/api/v1/videos/${videoId}?fields=formatStreams,title`, 5000
-      );
-      if (!res.ok) continue;
-      const data = await res.json();
-      const stream = data.formatStreams?.find(f =>
-        f.container === 'mp4' && f.qualityLabel && parseInt(f.qualityLabel) >= 480
-      ) || data.formatStreams?.find(f => f.container === 'mp4') || data.formatStreams?.[0];
-      if (stream?.url) return stream.url;
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 4000);
+      const res = await fetch(host, { mode: 'no-cors', signal: ctrl.signal });
+      clearTimeout(t);
+      // no-cors retorna opaque response (status 0) mas significa que o host respondeu
+      cachedEmbedFn = fn;
+      embedIndex = i;
+      console.log('Usando embed ad-free:', host);
+      return fn;
     } catch(e) { continue; }
   }
   return null;
 }
 
-async function loadStreamerVideo(videoId, container) {
-  streamerUsingFallback = false;
-  const streamUrl = await getVideoStream(videoId);
-  if (streamUrl) {
-    container.innerHTML = `
-      <div class="player-iframe-wrap">
-        <video data-vid="${esc(videoId)}" autoplay playsinline></video>
-      </div>`;
-    const vid = container.querySelector('video');
-    vid.src = streamUrl;
-    vid.volume = localVolume / 100;
-    vid.play().catch(() => {});
-    vid.addEventListener('ended', () => { if (mode === 'streamer') skipCurrent(); });
-    return;
-  }
-  // Fallback: YouTube embed (may have ads)
-  streamerUsingFallback = true;
-  container.innerHTML = `
-    <div class="player-iframe-wrap">
-      <iframe data-vid="${esc(videoId)}"
-        src="https://www.youtube-nocookie.com/embed/${esc(videoId)}?autoplay=1&rel=0&modestbranding=1&iv_load_policy=3"
-        allow="autoplay; encrypted-media" allowfullscreen></iframe>
-    </div>`;
+function getEmbedSrc(videoId) {
+  if (cachedEmbedFn) return cachedEmbedFn(videoId);
+  return ADFREE_EMBEDS[embedIndex](videoId);
 }
+
+// Inicia busca por instancia funcional ao carregar
+findWorkingEmbed();
 
 // --- Firebase writes ---
 async function fbSet(ref, data) { await ref.set(data); }
@@ -794,8 +752,6 @@ function updateDuration(v) {
 function updateVolume(v) {
   localVolume = Number(v);
   document.getElementById('vol-lbl').textContent = localVolume + '%';
-  const vid = document.querySelector('#player-area video');
-  if (vid) vid.volume = localVolume / 100;
   fbSet(setRef, { maxDuration: localMaxDuration, volume: localVolume });
 }
 
@@ -887,9 +843,14 @@ function renderAll() {
     const pw  = document.getElementById('player-area');
     const pc  = document.getElementById('player-controls');
     if (c) {
-      const ex = pw.querySelector('video, iframe');
+      const ex = pw.querySelector('iframe');
       if (!ex || ex.dataset.vid !== c.videoId) {
-        loadStreamerVideo(c.videoId, pw);
+        pw.innerHTML = `
+          <div class="player-iframe-wrap">
+            <iframe data-vid="${esc(c.videoId)}"
+              src="${getEmbedSrc(c.videoId)}"
+              allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>
+          </div>`;
       }
       document.getElementById('ctrl-who').textContent = c.submitter;
       pc.style.display = 'block';
