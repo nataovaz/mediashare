@@ -215,58 +215,100 @@ let clockTimer = null;
 let finishing = false;
 let usingFallback = false;
 
-// --- Ad-free embeds (Piped + Invidious direto, sem depender de API) ---
-const ADFREE_EMBEDS = [
-  id => `https://piped.kavin.rocks/embed/${id}?autoplay=1&loop=0`,
-  id => `https://piped.adminforge.de/embed/${id}?autoplay=1&loop=0`,
-  id => `https://inv.tux.pizza/embed/${id}?autoplay=1&quality=dash&local=true`,
-  id => `https://invidious.fdn.fr/embed/${id}?autoplay=1&quality=dash&local=true`,
-  id => `https://yewtu.be/embed/${id}?autoplay=1&quality=dash&local=true`,
-  id => `https://vid.puffyan.us/embed/${id}?autoplay=1&quality=dash&local=true`,
-];
+// --- YouTube IFrame Player API (detecta ads no overlay) ---
+let ytPlayer = null;
+let ytReady = false;
+let ytExpectedVideoId = '';
+let ytAdPlaying = false;
+let ytAdCheckInterval = null;
+let timerPausedForAd = false;
 
-let cachedEmbedFn = null;
-async function findWorkingEmbed() {
-  if (cachedEmbedFn) return cachedEmbedFn;
-  for (const fn of ADFREE_EMBEDS) {
-    const host = new URL(fn('test')).origin;
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 4000);
-      await fetch(host, { mode: 'no-cors', signal: ctrl.signal });
-      clearTimeout(t);
-      cachedEmbedFn = fn;
-      console.log('Overlay usando embed ad-free:', host);
-      return fn;
-    } catch(e) { continue; }
-  }
-  return null;
-}
+const ytApiTag = document.createElement('script');
+ytApiTag.src = 'https://www.youtube.com/iframe_api';
+document.head.appendChild(ytApiTag);
 
-function getEmbedSrc(videoId) {
-  if (cachedEmbedFn) return cachedEmbedFn(videoId);
-  return ADFREE_EMBEDS[0](videoId);
-}
+window.onYouTubeIframeAPIReady = function() { ytReady = true; };
 
 auth.signInAnonymously()
   .catch(error => console.error("Firebase anonymous auth failed", error))
-  .finally(() => { findWorkingEmbed(); attachFirebaseListeners(); });
+  .finally(attachFirebaseListeners);
 
 async function loadVideo(videoId, startSeconds) {
-  // Usa embed ad-free no iframe (Piped/Invidious)
-  usingFallback = false;
+  ytExpectedVideoId = videoId;
+  ytAdPlaying = false;
+  timerPausedForAd = false;
+  clearInterval(ytAdCheckInterval);
+
   video.style.display = "none";
-  ytFallback.style.display = "block";
-  const start = Math.floor(startSeconds || 0);
-  let src = getEmbedSrc(videoId);
-  if (start > 0) src += `&start=${start}`;
-  ytFallback.src = src;
+  ytFallback.style.display = "none";
+  usingFallback = true;
+
+  if (ytReady) {
+    // Usa container para o YT Player API
+    const shell = document.getElementById("video-shell");
+    let playerDiv = document.getElementById("yt-overlay-player");
+    if (!playerDiv) {
+      playerDiv = document.createElement("div");
+      playerDiv.id = "yt-overlay-player";
+      playerDiv.style.cssText = "position:absolute;inset:0;width:100%;height:100%;";
+      shell.appendChild(playerDiv);
+    }
+    playerDiv.style.display = "block";
+
+    if (ytPlayer) { try { ytPlayer.destroy(); } catch(e){} }
+
+    ytPlayer = new YT.Player("yt-overlay-player", {
+      videoId: videoId,
+      width: "100%",
+      height: "100%",
+      playerVars: {
+        autoplay: 1,
+        start: Math.floor(startSeconds || 0),
+        rel: 0,
+        modestbranding: 1,
+        iv_load_policy: 3,
+        enablejsapi: 1,
+        origin: window.location.origin
+      },
+      events: {
+        onReady: function(e) {
+          e.target.setVolume(volume);
+          startAdDetection();
+        },
+        onStateChange: function(e) {
+          if (e.data === YT.PlayerState.ENDED && !finishing) finishCurrent();
+        }
+      }
+    });
+  } else {
+    // Fallback: iframe simples
+    ytFallback.style.display = "block";
+    ytFallback.src = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&start=${Math.floor(startSeconds || 0)}&rel=0&modestbranding=1&iv_load_policy=3`;
+  }
 }
 
-// Video ended → play next
-video.addEventListener("ended", () => {
-  if (!finishing) finishCurrent();
-});
+function startAdDetection() {
+  clearInterval(ytAdCheckInterval);
+  ytAdCheckInterval = setInterval(() => {
+    if (!ytPlayer || typeof ytPlayer.getVideoData !== 'function') return;
+    try {
+      const data = ytPlayer.getVideoData();
+      const currentId = data?.video_id || '';
+      const isAd = currentId !== '' && currentId !== ytExpectedVideoId;
+
+      if (isAd && !ytAdPlaying) {
+        ytAdPlaying = true;
+        ytPlayer.mute();
+        timerPausedForAd = true;
+      } else if (!isAd && ytAdPlaying) {
+        ytAdPlaying = false;
+        ytPlayer.unMute();
+        ytPlayer.setVolume(volume);
+        timerPausedForAd = false;
+      }
+    } catch(e) {}
+  }, 500);
+}
 
 // --- Firebase listeners ---
 function attachFirebaseListeners() {
@@ -353,9 +395,13 @@ function hideOverlay() {
   document.getElementById("overlay-root").classList.remove("visible");
   clearTimeout(limitTimer);
   clearInterval(clockTimer);
+  clearInterval(ytAdCheckInterval);
   video.pause();
   video.removeAttribute("src");
   ytFallback.src = "";
+  if (ytPlayer) { try { ytPlayer.destroy(); } catch(e){} ytPlayer = null; }
+  const pd = document.getElementById("yt-overlay-player");
+  if (pd) pd.style.display = "none";
   document.getElementById("progress-bar").style.width = "0%";
 }
 
@@ -368,6 +414,7 @@ function syncClock() {
 }
 
 function updateClock() {
+  if (timerPausedForAd) return; // Nao conta tempo durante ad
   const duration = getDuration();
   const elapsed = Math.min(duration, getElapsed());
   const remaining = Math.max(0, duration - elapsed);
@@ -375,6 +422,7 @@ function updateClock() {
 
   document.getElementById("timer").textContent = formatTime(remaining);
   document.getElementById("progress-bar").style.width = `${Math.min(100, progress)}%`;
+  if (remaining <= 0 && !finishing) finishCurrent();
 }
 
 function getDuration() {

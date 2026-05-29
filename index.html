@@ -144,7 +144,13 @@ button:disabled { cursor: not-allowed; opacity: .55; transform: none; }
 .player-empty svg { opacity: .4; }
 .player-iframe-wrap { position: relative; padding-bottom: 56.25%; height: 0; }
 .player-iframe-wrap iframe,
-.player-iframe-wrap video { position: absolute; inset: 0; width: 100%; height: 100%; border: none; object-fit: contain; background: #000; }
+.player-iframe-wrap video,
+.player-iframe-wrap > div { position: absolute; inset: 0; width: 100%; height: 100%; border: none; object-fit: contain; background: #000; }
+#ad-label {
+  display: none; position: absolute; top: 10px; left: 10px; z-index: 10;
+  background: rgba(239,68,68,.9); color: #fff; font-size: 12px; font-weight: 700;
+  padding: 4px 10px; border-radius: 6px; pointer-events: none;
+}
 .player-controls { padding: 14px 18px; border-top: .5px solid var(--border); }
 .ctrl-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .ctrl-by { font-size: 13px; color: var(--text2); }
@@ -323,7 +329,8 @@ button:disabled { cursor: not-allowed; opacity: .55; transform: none; }
       <!-- Left column -->
       <div>
         <!-- Player -->
-        <div class="card" style="padding:0;overflow:hidden;" id="player-card">
+        <div class="card" style="padding:0;overflow:hidden;position:relative;" id="player-card">
+          <div id="ad-label">AD — Timer pausado</div>
           <div id="player-area">
             <div class="player-empty" id="player-empty">
               <svg width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -514,47 +521,85 @@ function esc(s) {
 }
 function pending() { return localQueue.filter(v => v.id !== localCurrent?.id); }
 
-// --- Ad-free embeds (Piped + Invidious iframe direto, sem API) ---
-const ADFREE_EMBEDS = [
-  id => `https://piped.kavin.rocks/embed/${id}?autoplay=1&loop=0`,
-  id => `https://piped.adminforge.de/embed/${id}?autoplay=1&loop=0`,
-  id => `https://inv.tux.pizza/embed/${id}?autoplay=1&quality=dash&local=true`,
-  id => `https://invidious.fdn.fr/embed/${id}?autoplay=1&quality=dash&local=true`,
-  id => `https://yewtu.be/embed/${id}?autoplay=1&quality=dash&local=true`,
-  id => `https://vid.puffyan.us/embed/${id}?autoplay=1&quality=dash&local=true`,
-];
-let embedIndex = 0;
+// --- YouTube IFrame Player API (detecta ads, muta e pausa timer) ---
+let ytPlayer = null;
+let ytReady = false;
+let ytExpectedVideoId = '';
+let ytAdPlaying = false;
+let ytAdCheckInterval = null;
+let timerPausedForAd = false;
 
-// Testa qual instancia esta viva e cacheia
-let cachedEmbedFn = null;
-async function findWorkingEmbed() {
-  if (cachedEmbedFn) return cachedEmbedFn;
-  for (let i = 0; i < ADFREE_EMBEDS.length; i++) {
-    const fn = ADFREE_EMBEDS[i];
-    const testUrl = fn('dQw4w9WgXcQ'); // URL de teste
-    const host = new URL(testUrl).origin;
+// Carrega a API do YouTube IFrame Player
+const ytApiTag = document.createElement('script');
+ytApiTag.src = 'https://www.youtube.com/iframe_api';
+document.head.appendChild(ytApiTag);
+
+window.onYouTubeIframeAPIReady = function() { ytReady = true; };
+
+function createYTPlayer(videoId, container) {
+  ytExpectedVideoId = videoId;
+  ytAdPlaying = false;
+  clearInterval(ytAdCheckInterval);
+
+  container.innerHTML = '<div class="player-iframe-wrap"><div id="yt-player-div"></div></div>';
+
+  if (ytPlayer) { try { ytPlayer.destroy(); } catch(e){} }
+
+  ytPlayer = new YT.Player('yt-player-div', {
+    videoId: videoId,
+    width: '100%',
+    height: '100%',
+    playerVars: {
+      autoplay: 1,
+      rel: 0,
+      modestbranding: 1,
+      iv_load_policy: 3,
+      enablejsapi: 1,
+      origin: window.location.origin
+    },
+    events: {
+      onReady: function(e) {
+        e.target.setVolume(localVolume);
+        startAdDetection();
+      },
+      onStateChange: function(e) {
+        // Video terminou
+        if (e.data === YT.PlayerState.ENDED && mode === 'streamer') {
+          skipCurrent();
+        }
+      }
+    }
+  });
+}
+
+function startAdDetection() {
+  clearInterval(ytAdCheckInterval);
+  ytAdCheckInterval = setInterval(() => {
+    if (!ytPlayer || typeof ytPlayer.getVideoData !== 'function') return;
     try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 4000);
-      const res = await fetch(host, { mode: 'no-cors', signal: ctrl.signal });
-      clearTimeout(t);
-      // no-cors retorna opaque response (status 0) mas significa que o host respondeu
-      cachedEmbedFn = fn;
-      embedIndex = i;
-      console.log('Usando embed ad-free:', host);
-      return fn;
-    } catch(e) { continue; }
-  }
-  return null;
-}
+      const data = ytPlayer.getVideoData();
+      const currentId = data?.video_id || '';
+      const isAd = currentId !== '' && currentId !== ytExpectedVideoId;
 
-function getEmbedSrc(videoId) {
-  if (cachedEmbedFn) return cachedEmbedFn(videoId);
-  return ADFREE_EMBEDS[embedIndex](videoId);
+      if (isAd && !ytAdPlaying) {
+        // Ad comecou
+        ytAdPlaying = true;
+        ytPlayer.mute();
+        timerPausedForAd = true;
+        const adLabel = document.getElementById('ad-label');
+        if (adLabel) adLabel.style.display = 'block';
+      } else if (!isAd && ytAdPlaying) {
+        // Ad acabou, video real comecou
+        ytAdPlaying = false;
+        ytPlayer.unMute();
+        ytPlayer.setVolume(localVolume);
+        timerPausedForAd = false;
+        const adLabel = document.getElementById('ad-label');
+        if (adLabel) adLabel.style.display = 'none';
+      }
+    } catch(e) {}
+  }, 500);
 }
-
-// Inicia busca por instancia funcional ao carregar
-findWorkingEmbed();
 
 // --- Firebase writes ---
 async function fbSet(ref, data) { await ref.set(data); }
@@ -752,6 +797,9 @@ function updateDuration(v) {
 function updateVolume(v) {
   localVolume = Number(v);
   document.getElementById('vol-lbl').textContent = localVolume + '%';
+  if (ytPlayer && typeof ytPlayer.setVolume === 'function' && !ytAdPlaying) {
+    ytPlayer.setVolume(localVolume);
+  }
   fbSet(setRef, { maxDuration: localMaxDuration, volume: localVolume });
 }
 
@@ -765,7 +813,7 @@ function startTimer() {
   tLeft = Math.max(0, duration - elapsed);
   updateTimerUI();
   tInt = setInterval(async () => {
-    tLeft--;
+    if (!timerPausedForAd) tLeft--;
     updateTimerUI();
     if (tLeft <= 0) await skipCurrent();
   }, 1000);
@@ -843,14 +891,19 @@ function renderAll() {
     const pw  = document.getElementById('player-area');
     const pc  = document.getElementById('player-controls');
     if (c) {
-      const ex = pw.querySelector('iframe');
-      if (!ex || ex.dataset.vid !== c.videoId) {
-        pw.innerHTML = `
-          <div class="player-iframe-wrap">
-            <iframe data-vid="${esc(c.videoId)}"
-              src="${getEmbedSrc(c.videoId)}"
-              allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>
-          </div>`;
+      const exDiv = document.getElementById('yt-player-div');
+      if (!exDiv || pw.dataset.vid !== c.videoId) {
+        pw.dataset.vid = c.videoId;
+        if (ytReady) {
+          createYTPlayer(c.videoId, pw);
+        } else {
+          // API ainda carregando, usa iframe simples como ponte
+          pw.innerHTML = `
+            <div class="player-iframe-wrap">
+              <iframe src="https://www.youtube-nocookie.com/embed/${esc(c.videoId)}?autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&enablejsapi=1"
+                allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>
+            </div>`;
+        }
       }
       document.getElementById('ctrl-who').textContent = c.submitter;
       pc.style.display = 'block';
